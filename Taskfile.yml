@@ -1,0 +1,43 @@
+version: "3"
+
+vars:
+  PROJECT_NAME: chatbit
+  RESULTS: artifacts
+
+tasks:
+  build:app:
+    desc: Build ChatBit
+    vars:
+      build_hash:
+        sh: echo $(git rev-parse HEAD)
+      build_tag:
+        sh: echo $(git tag --points-at HEAD)
+      version: '{{.build_tag | default "0.0.0" }}'
+      build_ldflags: >-
+        -ldflags
+        '
+        -s -w
+        -X main.version="{{.version}}"
+        -X main.name="{{.PROJECT_NAME}}"
+        -X main.commit="{{.build_hash}}"
+        -X main.buildDate="{{now | date "2006-01-02T15:04:05Z07:00"}}"
+        '
+    summary: |
+      This task will build a golang application
+    cmds:
+      - echo "Building {{.PROJECT_NAME}} v{{.VERSION}}"
+      - |
+        go build -a -trimpath \
+          {{.build_ldflags}} \
+          -o {{ .RESULTS}}/{{.PROJECT_NAME }} \
+          main.go
+
+  build:docker:
+    cmds:
+      - |
+        docker buildx build \
+          -t registry.benoni.dev/chatbit:0.0.0-dev1  \
+          --platform="linux/amd64" \
+          --build-arg="TARGET_BASE_IMAGE=alpine:3.23" \
+          --build-arg="BUILD_BASE_IMAGE=golang:1.25-alpine3.23" \
+          .
