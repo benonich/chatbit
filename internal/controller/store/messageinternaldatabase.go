@@ -1,53 +1,38 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
 
-type MessageAdapterInternal struct {
-	db     Database
-	prefix []byte
+	"github.com/google/uuid"
+)
+
+type MessageAdapterInternal[T ObjectMessageInternal] struct {
+	DBInternal[T]
+	db Database[T]
 }
 
-func NewMessageAdapterInternal(db Database, prefix uint16) *MessageAdapterInternal {
-	return &MessageAdapterInternal{
-		db:     db,
-		prefix: convertUint16ToByte(prefix),
+func NewMessageAdapterInternal[T ObjectMessageInternal](db Database[T]) *MessageAdapterInternal[T] {
+	return &MessageAdapterInternal[T]{
+		DBInternal: NewAdapterInternal[T](db),
+		db:         db,
 	}
 }
 
-func (aI *MessageAdapterInternal) GetAll(roomID string) error {
-	return nil
-}
-
-func (aI *MessageAdapterInternal) GetAllFromTimeStamp(roomID string, timestamp int64) error {
-	return nil
-}
-func (aI *MessageAdapterInternal) DeleteAll(roomID string) error {
-	return nil
-}
-
-func (aI *MessageAdapterInternal) Delete(ID, roomID []byte) error {
-	err := aI.db.DeleteObjectByID(append(aI.prefix, append(roomID, ID...)...))
+func (aI *MessageAdapterInternal[T]) GetAllSinceTimeStamp(roomID string, timestamp uint64) ([]T, error) {
+	parsedUUID, err := uuid.Parse(roomID)
 	if err != nil {
-		return fmt.Errorf("not possible to delete object from database: %w", err)
+		return nil, fmt.Errorf("not possible to parse roomID: %w", err)
 	}
 
-	return nil
-}
+	prefix := append(convertUint16ToByte(PrefixRoom), parsedUUID[:]...)
 
-func (aI *MessageAdapterInternal) Add(obj ObjectMessageInternal) error {
-	err := aI.db.AddObject(append(aI.prefix, append(obj.GetRoomIDByte(), obj.GetIDByte()...)...), obj)
+	objArr, err := aI.db.GetObjectsByPrefixAndSinceTs(prefix, timestamp)
 	if err != nil {
-		return fmt.Errorf("not possible store object to database: %v", err)
+		return nil, fmt.Errorf("not possible to parse roomID: %w", err)
 	}
 
-	return nil
+	return objArr, nil
 }
-
-func (aI *MessageAdapterInternal) Get(ID, roomID []byte, obj ObjectMessageInternal) error {
-	err := aI.db.GetObjectByID(append(aI.prefix, append(roomID, ID...)...), obj)
-	if err != nil {
-		return fmt.Errorf("not possible get object from database: %v", err)
-	}
-
+func (aI *MessageAdapterInternal[T]) DeleteAll(roomID string) error {
 	return nil
 }

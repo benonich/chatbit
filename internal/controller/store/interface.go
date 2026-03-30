@@ -8,16 +8,15 @@ type Database[T any] interface {
 	GetObjectsByPrefixAndSinceTs(prefix []byte, timestamp uint64) ([]T, error)
 }
 
-type DBInternal interface {
+type DBInternal[T ObjectInternal] interface {
 	Delete(ID string) error
-	Add(obj ObjectInternal) error
-	Get(ID string, obj ObjectInternal) error
+	Add(obj T) error
+	Get(ID string) (T, error)
 }
 
-type MessageInternal interface {
-	DBInternal
-	GetAll(roomID string) error
-	GetAllFromTimeStamp(roomID string, timestamp int64) error
+type DBMessageInternal[T ObjectMessageInternal] interface {
+	DBInternal[T]
+	GetAllSinceTimeStamp(roomID string, timestamp uint64) ([]T, error)
 	DeleteAll(roomID string) error
 }
 

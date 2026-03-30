@@ -15,7 +15,7 @@ class WebSocketChannel {
 
         console.log("join rooms " + allRooms)
 
-        ws.joinRooms({rooms: allRooms});
+        ws.joinRooms({rooms: allRooms, last_connection_time: new Date()});
      }
 
     init(db_room){

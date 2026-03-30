@@ -17,26 +17,36 @@ var (
 	prefixChat = ConvertUint16ToByte(PrefixChat)
 )
 
+type Database struct {
+	*badger.DB
+}
+
+func NewDatabase() *Database {
+	return &Database{}
+}
+
 type Adapter[T any] struct {
-	db *badger.DB
+	db *Database
 }
 
-func NewAdapter[T any]() *Adapter[T] {
-	return &Adapter[T]{}
+func NewAdapter[T any](db *Database) *Adapter[T] {
+	return &Adapter[T]{
+		db: db,
+	}
 }
 
-func (a *Adapter[T]) Open() {
+func (a *Database) Open() {
 	var err error
 
-	a.db, err = badger.Open(badger.DefaultOptions(Path))
+	a.DB, err = badger.Open(badger.DefaultOptions(Path))
 	if err != nil {
 		slog.Error("not possible to open badger db",
 			"error", err)
 	}
 }
 
-func (a *Adapter[T]) Close() {
-	err := a.db.Close()
+func (a *Database) Close() {
+	err := a.DB.Close()
 	if err != nil {
 		slog.Error("not possible to close badger db",
 			"error", err)

@@ -1,4 +1,4 @@
-package port
+package old
 
 import (
 	"encoding/json"
@@ -23,9 +23,9 @@ type SignalMessage struct {
 	Peers     []string        `json:"peers,omitempty"`     // beim join: aktuelle Peers im Raum
 }
 
-// ------------- Client & Hub -------------
+// ------------- WsClient & Hub -------------
 
-type Client struct {
+type WsClient struct {
 	conn   *websocket.Conn
 	send   chan []byte
 	userID string
@@ -34,22 +34,22 @@ type Client struct {
 
 type Hub struct {
 	mu    sync.RWMutex
-	rooms map[string]map[string]*Client // roomID -> userID -> client
+	rooms map[string]map[string]*WsClient // roomID -> userID -> client
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		rooms: make(map[string]map[string]*Client),
+		rooms: make(map[string]map[string]*WsClient),
 	}
 }
 
-// Client in Raum registrieren
-func (h *Hub) Join(roomID, userID string, c *Client) []string {
+// WsClient in Raum registrieren
+func (h *Hub) Join(roomID, userID string, c *WsClient) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if h.rooms[roomID] == nil {
-		h.rooms[roomID] = make(map[string]*Client)
+		h.rooms[roomID] = make(map[string]*WsClient)
 	}
 
 	// Liste der vorhandenen Peers zurückgeben
@@ -67,8 +67,8 @@ func (h *Hub) Join(roomID, userID string, c *Client) []string {
 	return peers
 }
 
-// Client aus Raum entfernen
-func (h *Hub) Leave(c *Client) {
+// WsClient aus Raum entfernen
+func (h *Hub) Leave(c *WsClient) {
 	if c == nil || c.roomID == "" || c.userID == "" {
 		return
 	}
@@ -150,7 +150,7 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := &Client{
+	client := &WsClient{
 		conn: conn,
 		send: make(chan []byte, 256),
 	}
@@ -159,8 +159,8 @@ func handleWebSocket(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	readPump(hub, client)
 }
 
-// Liest Messages vom Client
-func readPump(hub *Hub, c *Client) {
+// Liest Messages vom WsClient
+func readPump(hub *Hub, c *WsClient) {
 	defer func() {
 		hub.Leave(c)
 		// presence offline broadcasten
@@ -243,8 +243,8 @@ func readPump(hub *Hub, c *Client) {
 	}
 }
 
-// Schreibt Messages zum Client
-func writePump(c *Client) {
+// Schreibt Messages zum WsClient
+func writePump(c *WsClient) {
 	defer c.conn.Close()
 	for {
 		select {

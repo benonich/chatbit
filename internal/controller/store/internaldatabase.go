@@ -1,24 +1,35 @@
 package store
 
 import (
+	"chatbit/internal/domain"
 	"encoding/binary"
 	"fmt"
 )
 
-type AdapterInternal[T ObjectMessageInternal] struct {
+type AdapterInternal[T ObjectInternal] struct {
 	db     Database[T]
 	prefix []byte
 }
 
-func NewAdapterInternal[T ObjectMessageInternal](db Database[T], prefix uint16) *AdapterInternal[T] {
+func NewAdapterInternal[T ObjectInternal](db Database[T]) *AdapterInternal[T] {
+	var obj T
+
+	var prefix []byte
+
+	switch any(obj).(type) {
+	case domain.Message:
+		prefix = convertUint16ToByte(PrefixRoom)
+	case domain.Room:
+		prefix = convertUint16ToByte(PrefixMessage)
+	}
+
 	return &AdapterInternal[T]{
 		db:     db,
-		prefix: convertUint16ToByte(prefix),
+		prefix: prefix,
 	}
 }
 
 func (aI *AdapterInternal[T]) Delete(ID string) error {
-
 	err := aI.db.DeleteObjectByID(append(aI.prefix, []byte(ID)...))
 	if err != nil {
 		return fmt.Errorf("not possible to delete object from database: %w", err)
