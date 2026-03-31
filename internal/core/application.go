@@ -18,7 +18,7 @@ type DB struct {
 }
 
 type PS struct {
-	Message *pubsub.AdapterTopic[domain.Message]
+	Message *pubsub.Adapter[domain.Message]
 }
 
 func NewApplication() *Application {
@@ -28,10 +28,10 @@ func NewApplication() *Application {
 	return &Application{
 		DB: DB{
 			Room:    store.NewAdapterInternal[domain.Room](database.NewAdapter[domain.Room](db)),
-			Message: store.NewMessageAdapterInternal[domain.Message](database.NewAdapter[domain.Message](db)),
+			Message: store.NewMessageAdapterInternal[domain.Message](database.NewAdapterTs[domain.Message](db)),
 		},
 		PS: PS{
-			Message: pubsub.NewAdapterTopic[domain.Message](),
+			Message: pubsub.NewAdapter[domain.Message](),
 		},
 	}
 }

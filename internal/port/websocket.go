@@ -3,7 +3,6 @@ package port
 import (
 	"chatbit/internal/adapter/pubsub"
 	"chatbit/internal/core"
-	"chatbit/internal/domain"
 	"log/slog"
 	"net/http"
 
@@ -18,13 +17,13 @@ var upgrader = websocket.Upgrader{
 
 type wsHandler struct {
 	psWsMsgAdapter *pubsub.AdapterTopic[[]byte]
-	app   *core.Application
+	app            *core.Application
 }
 
 func (s *Server) StartWebSocketServer() {
 	servWS := &wsHandler{
 		psWsMsgAdapter: pubsub.NewAdapterTopic[[]byte](),
-		app:   s.app,
+		app:            s.app,
 	}
 
 	s.servMux.Handle("/ws", servWS)
@@ -42,8 +41,7 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		conn:           conn,
 		send:           make(chan []byte, 256),
 		psWsMsgAdapter: h.psWsMsgAdapter,
-		psMsgAdapter:   h.psMsgAdapter,
-		db: h.
+		app:            h.app,
 	}
 
 	// Allow collection of memory referenced by the caller by doing all work in

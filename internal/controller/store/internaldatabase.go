@@ -39,7 +39,7 @@ func (aI *AdapterInternal[T]) Delete(ID string) error {
 }
 
 func (aI *AdapterInternal[T]) Add(obj T) error {
-	err := aI.db.AddObject(append(aI.prefix, []byte(obj.GetID())...), obj)
+	err := aI.db.AddObject(append(aI.prefix, obj.GetIDByte()...), obj)
 	if err != nil {
 		return fmt.Errorf("not possible store object to database: %v", err)
 	}

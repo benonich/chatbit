@@ -8,10 +8,10 @@ import (
 
 type MessageAdapterInternal[T ObjectMessageInternal] struct {
 	DBInternal[T]
-	db Database[T]
+	db DatabaseTs[T]
 }
 
-func NewMessageAdapterInternal[T ObjectMessageInternal](db Database[T]) *MessageAdapterInternal[T] {
+func NewMessageAdapterInternal[T ObjectMessageInternal](db DatabaseTs[T]) *MessageAdapterInternal[T] {
 	return &MessageAdapterInternal[T]{
 		DBInternal: NewAdapterInternal[T](db),
 		db:         db,

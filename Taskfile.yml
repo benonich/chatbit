@@ -36,7 +36,7 @@ tasks:
     cmds:
       - |
         docker buildx build \
-          -t registry.benoni.dev/chatbit:0.0.0-dev1  \
+          -t registry.benoni.dev/chatbit:0.0.0-dev2  \
           --platform="linux/amd64" \
           --build-arg="TARGET_BASE_IMAGE=alpine:3.23" \
           --build-arg="BUILD_BASE_IMAGE=golang:1.25-alpine3.23" \

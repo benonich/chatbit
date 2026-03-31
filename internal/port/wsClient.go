@@ -53,7 +53,6 @@ func (c *WsClient) readPump() {
 		slog.Info("client disconnected", slog.String("subID", c.subID))
 		c.conn.Close()
 		c.psWsMsgAdapter.Unsubscribe(c.subID)
-		c.app.PS.Message.Unsubscribe(c.subID)
 	}()
 
 	slog.Info("client connected", slog.String("subID:", c.subID))
@@ -92,22 +91,9 @@ func (c *WsClient) readPump() {
 				continue
 			}
 
-			c.app.PS.Message.Publish(msg.RoomID, msg)
+			c.app.PS.Message.Publish(msg)
 			c.psWsMsgAdapter.Publish(msg.RoomID, message)
 			slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID))
-		case domain.WsTypeJoinRoom:
-			msg := domain.JoinRooms{}
-
-			err = json.Unmarshal(wsMsg.Data, &msg)
-			if err != nil {
-				slog.Error("not possible to unmarshal ws message JoinRooms", slog.String("error", err.Error()))
-				continue
-			}
-
-			for _, room := range msg.Rooms {
-				slog.Info("join room", slog.String("subID", c.subID), slog.String("roomID", room))
-				c.psWsMsgAdapter.AddSubscriberToTopic(c.subID, room)
-			}
 
 		case domain.WsTypeLeaveRoom:
 			msg := domain.LeaveRooms{}
@@ -123,28 +109,47 @@ func (c *WsClient) readPump() {
 				c.psWsMsgAdapter.UnsubscribeFromTopic(c.subID, room)
 			}
 
-		case domain.WsTypeGetLastMessage:
-			msg := domain.GetLastMessage{}
+		case domain.WsTypeJoinRoom:
+			msg := domain.JoinRooms{}
 
 			err = json.Unmarshal(wsMsg.Data, &msg)
 			if err != nil {
-				slog.Error("not possible to unmarshal ws message GetLastMessage", slog.String("error", err.Error()))
+				slog.Error("not possible to unmarshal ws message JoinRooms", slog.String("error", err.Error()))
 				continue
 			}
 
-			allMs, err := c.app.DB.Message.GetAllSinceTimeStamp(msg.RoomID, msg.SinceTimeStamp)
+			var allMs []domain.Message
+			var msgSend []byte
 
-			for _, m := range allMs {
-				msgSend, err := json.Marshal(m)
+			for _, room := range msg.Rooms {
+				slog.Info("join room", slog.String("subID", c.subID), slog.String("roomID", room))
+				c.psWsMsgAdapter.AddSubscriberToTopic(c.subID, room)
 
-				wsMsgSend := domain.WsMessage{
-					Type: string(domain.WsTypeMessage),
-					Data: msgSend,
+				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room, msg.LastConnectionTime)
+
+				for _, m := range allMs {
+
+					msgSend, err = json.Marshal(m)
+					if err != nil {
+						slog.Error("not possible to marshal Message", slog.String("error", err.Error()))
+						continue
+					}
+
+					wsMsgSend := domain.WsMessage{
+						Type: string(domain.WsTypeMessage),
+						Data: msgSend,
+					}
+
+					msgSend, err = json.Marshal(wsMsgSend)
+					if err != nil {
+						slog.Error("not possible to marshal WsMessage", slog.String("error", err.Error()))
+						continue
+					}
+
+					slog.Debug("Message sent", slog.String("subID", c.subID), slog.String("roomID", room), slog.String("msgID:", m.ID))
+
+					c.send <- msgSend
 				}
-
-				msgSend, err := json.Marshal(wsMsgSend)
-
-				c.send <- msgSend
 			}
 
 		case domain.WsTypePresenceRequest:

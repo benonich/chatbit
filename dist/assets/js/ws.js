@@ -15,7 +15,10 @@ class WebSocketChannel {
 
         console.log("join rooms " + allRooms)
 
-        ws.joinRooms({rooms: allRooms, last_connection_time: new Date()});
+        const lastMsg = await db.chat.orderBy('timestamp').last();
+        const last_connection_time = lastMsg ? lastMsg.timestamp : Date.now();
+
+        ws.joinRooms({rooms: allRooms, last_connection_time});
      }
 
     init(db_room){

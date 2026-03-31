@@ -5,6 +5,13 @@ type Database[T any] interface {
 	AddObject(ID []byte, obj T) error
 	GetObjectByID(ID []byte) (T, error)
 	DeleteObjectsByPrefix(prefix []byte) error
+}
+
+type DatabaseTs[T any] interface {
+	DeleteObjectByID(ID []byte) error
+	AddObject(ID []byte, obj T) error
+	GetObjectByID(ID []byte) (T, error)
+	DeleteObjectsByPrefix(prefix []byte) error
 	GetObjectsByPrefixAndSinceTs(prefix []byte, timestamp uint64) ([]T, error)
 }
 
@@ -30,4 +37,5 @@ type ObjectMessageInternal interface {
 	GetIDByte() []byte
 	GetRoomID() string
 	GetRoomIDByte() []byte
+	GetTimestamp() uint64
 }

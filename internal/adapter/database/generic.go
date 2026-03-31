@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -58,6 +59,22 @@ func (a *Adapter[T]) AddObject(ID []byte, obj T) error {
 	return nil
 }
 
+func (a *Adapter[T]) AddObjectWithTTL(ID []byte, obj T, ttl time.Duration) error {
+	objB, err := json.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("not possible to convert go object to byte")
+	}
+
+	err = a.db.Update(func(txn *badger.Txn) error {
+		return txn.SetEntry(badger.NewEntry(ID, objB).WithTTL(ttl))
+	})
+	if err != nil {
+		return fmt.Errorf("not possible to store object to database")
+	}
+
+	return nil
+}
+
 func (a *Adapter[T]) GetObjectByID(ID []byte) (T, error) {
 	var err error
 
@@ -90,44 +107,4 @@ func (a *Adapter[T]) GetObjectByID(ID []byte) (T, error) {
 	}
 
 	return obj, nil
-}
-
-func (a *Adapter[T]) GetObjectsByPrefixAndSinceTs(prefix []byte, timestamp uint64) ([]T, error) {
-	var objects []T
-
-	err := a.db.View(func(txn *badger.Txn) error {
-		itr := txn.NewIterator(badger.IteratorOptions{
-			Prefix:  prefix,
-			SinceTs: timestamp,
-		})
-
-		defer itr.Close()
-
-		for itr.Rewind(); itr.Valid(); itr.Next() {
-			item := itr.Item()
-
-			//Important to copy
-			objCopyBin, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-
-			var obj T
-
-			err = json.Unmarshal(objCopyBin, &obj)
-			if err != nil {
-				return fmt.Errorf("failed to unmarshal object: %w", err)
-			}
-
-			objects = append(objects, obj)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return objects, nil
 }

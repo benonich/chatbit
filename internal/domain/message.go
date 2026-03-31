@@ -8,12 +8,12 @@ type Message struct {
 	Alias     string            `json:"alias,omitempty"`
 	AliasID   string            `json:"alias_id,omitempty"`
 	Message   string            `json:"message,omitempty"`
-	TimeStamp int64             `json:"timestamp,omitempty"`
+	TimeStamp uint64            `json:"timestamp,omitempty"`
 	Received  []MessageReceived `json:"received,omitempty"` // Alias of the receivers
 }
 type MessageReceived struct {
 	AliasID   string `json:"alias_id,omitempty"`
-	TimeStamp int64  `json:"timestamp,omitempty"`
+	TimeStamp uint64 `json:"timestamp,omitempty"`
 }
 
 func (m Message) GetID() string {
@@ -22,7 +22,7 @@ func (m Message) GetID() string {
 
 func (m Message) GetIDByte() []byte {
 	parsedUUID, _ := uuid.Parse(m.ID)
-	return parsedUUID[:]
+	return append(m.GetRoomIDByte(), parsedUUID[:]...)
 }
 
 func (m Message) GetRoomID() string {
@@ -32,6 +32,10 @@ func (m Message) GetRoomID() string {
 func (m Message) GetRoomIDByte() []byte {
 	parsedUUID, _ := uuid.Parse(m.RoomID)
 	return parsedUUID[:]
+}
+
+func (m Message) GetTimestamp() uint64 {
+	return m.TimeStamp
 }
 
 type GetLastMessage struct {
