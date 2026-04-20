@@ -24,7 +24,7 @@ func main() {
 		app.DB.Message.Add(obj)
 	})
 
-	privateKey, publicKey, _ := vapid.GenerateVAPIDKeys()
+	vapid.GenerateVapID()
 
 	serv := port.NewServer(app)
 	serv.Start()

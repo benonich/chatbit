@@ -25,37 +25,39 @@ class WebSocketChannel {
         if(this.conn !== null && this.conn.readyState === WebSocket.OPEN){
             return;
         }
-        return new Promise((resolve, reject) => {
-        if (window["WebSocket"]) {
+        return new Promise(async (resolve, reject) => {
+            if (window["WebSocket"]) {
 
-            this.conn = new WebSocket(this._getEndpoint());
+                const clientUid = await GetClientUID();
 
-            this.conn.onclose = async (evt) => {
-                console.log("WS Connection closed");
-                console.log(evt);
-                await new Promise(resolve => setTimeout(resolve, 1000) );
-                console.log("Try again to connect to WS");
-                this.init(db_room);
-            };
+                this.conn = new WebSocket(this._getEndpoint() + "?client_uid=" + clientUid);
 
-            this.conn.onmessage = this.onMessageReceived;
+                this.conn.onclose = async (evt) => {
+                    console.log("WS Connection closed");
+                    console.log(evt);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    console.log("Try again to connect to WS");
+                    this.init(db_room);
+                };
 
-            this.conn.onopen = () => {
-                console.log("WS Connection connected");
-                this._joinAllRooms(db_room).then();
-                resolve();
+                this.conn.onmessage = this.onMessageReceived;
+
+                this.conn.onopen = () => {
+                    console.log("WS Connection connected");
+                    this._joinAllRooms(db_room).then();
+                    resolve();
+                }
+
+                this.conn.onerror = (err) => {
+                    console.log("WS Connection error: " + err.message);
+                    reject(err);
+                }
+
+            } else {
+                // ToDo: Error handling
+                reject(new Error("WebSockets not supported"));
             }
-
-            this.conn.onerror = (err) => {
-                console.log("WS Connection error: " + err.message);
-                reject(err);
-            }
-
-        } else {
-            // ToDo: Error handling
-            reject(new Error("WebSockets not supported"));
-        }
-    });
+        });
     }
 
     send(type, msg){
@@ -85,6 +87,15 @@ class WebSocketChannel {
     leaveRooms(msg){
         let wsMsg = {
             type: "join_rooms",
+            data: msg,
+        }
+        this.conn.send(JSON.stringify(wsMsg));
+    }
+
+    // subscribe to VAPID Push notifications
+    subscribePush(msg){
+        let wsMsg = {
+            type: "sub_push",
             data: msg,
         }
         this.conn.send(JSON.stringify(wsMsg));
@@ -157,15 +168,13 @@ async function receiveMessageWS(item) {
 
         let timeStamp = new Date(item.timestamp);
 
-        console.log(msgD);
-
         if (aliasIDD !== db_alias.uid){
             AddMessageToRoom(msgD, aliasIDD, aliasD, timeStamp, item.protocol)
         }
     }
 
     if (aliasD !== db_alias.name){
-        db.chat.add(item);
+        await db.chat.add(item);
     }else{
         // add message is on the server side
     }

@@ -101,7 +101,7 @@ func (a *Adapter[T]) GetObjectByID(ID []byte) (T, error) {
 		return obj, fmt.Errorf("not possible to get object by ID from the database")
 	}
 
-	err = json.Unmarshal(objCopy, obj)
+	err = json.Unmarshal(objCopy, &obj)
 	if err != nil {
 		return obj, fmt.Errorf("not possible to convert byte  to go object")
 	}

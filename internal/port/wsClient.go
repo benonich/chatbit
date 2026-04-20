@@ -8,8 +8,11 @@ import (
 	"encoding/json"
 	"log"
 	"log/slog"
+	"os"
+	"slices"
 	"time"
 
+	"github.com/SherClockHolmes/webpush-go"
 	"github.com/gorilla/websocket"
 )
 
@@ -38,7 +41,7 @@ type WsClient struct {
 
 	// Buffered channel of outbound messages.
 	send           chan []byte
-	subID          string
+	UID            string
 	psWsMsgAdapter *pubsub.AdapterTopic[[]byte]
 	app            *core.Application
 }
@@ -50,16 +53,16 @@ type WsClient struct {
 // reads from this goroutine.
 func (c *WsClient) readPump() {
 	defer func() {
-		slog.Info("client disconnected", slog.String("subID", c.subID))
+		slog.Info("client disconnected", slog.String("UID", c.UID))
 		c.conn.Close()
-		c.psWsMsgAdapter.Unsubscribe(c.subID)
+		c.psWsMsgAdapter.Unsubscribe(c.UID)
 	}()
 
-	slog.Info("client connected", slog.String("subID:", c.subID))
+	slog.Info("client connected", slog.String("UID:", c.UID))
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
-		slog.Debug("received pong websocket message", slog.String("subID", c.subID))
+		slog.Debug("received pong websocket message", slog.String("UID", c.UID))
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
@@ -92,8 +95,52 @@ func (c *WsClient) readPump() {
 			}
 
 			c.app.PS.Message.Publish(msg)
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID))
+			//c.psWsMsgAdapter.Publish(msg.RoomID, message)
+			//slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID))
+
+			room, err := c.app.DB.Room.Get(msg.RoomID)
+			if err != nil {
+				slog.Error("not possible to get room", slog.String("error", err.Error()))
+				continue
+			}
+			for _, peer := range room.Peers {
+				err = c.psWsMsgAdapter.PublishTo(msg.RoomID, peer, message)
+				if err != nil {
+					slog.Error("not possible to publish message, send Notification", slog.String("error", err.Error()))
+					pushID, err := c.app.DB.Push.Get(peer)
+					if err != nil {
+						slog.Error("not possible to get pushID", slog.String("error", err.Error()))
+						continue
+					}
+					sub := &webpush.Subscription{
+						Endpoint: pushID.Endpoint,
+						Keys: webpush.Keys{
+							P256dh: pushID.P256DH,
+							Auth:   pushID.Auth,
+						},
+					}
+					slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID), slog.String("AliasID:", pushID.ID))
+					body, _ := json.Marshal(map[string]string{
+						"title": "ChatBit",
+						"body":  "NEW MESSAGE FROM ChatBit",
+						"url":   "/",
+					})
+
+					option := webpush.Options{
+						VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
+						VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+						TTL:             30,
+					}
+
+					resp, err := webpush.SendNotification(body, sub, &option)
+					if err != nil {
+						slog.Error("not possible to send push notification", slog.String("error", err.Error()))
+					}
+					defer resp.Body.Close()
+
+					continue
+				}
+			}
 
 		case domain.WsTypeLeaveRoom:
 			msg := domain.LeaveRooms{}
@@ -105,8 +152,8 @@ func (c *WsClient) readPump() {
 			}
 
 			for _, room := range msg.Rooms {
-				slog.Info("leave room", slog.String("roomID", room), slog.String("subID:", c.subID))
-				c.psWsMsgAdapter.UnsubscribeFromTopic(c.subID, room)
+				slog.Info("leave room", slog.String("roomID", room), slog.String("UID:", c.UID))
+				c.psWsMsgAdapter.UnsubscribeFromTopic(c.UID, room)
 			}
 
 		case domain.WsTypeJoinRoom:
@@ -122,8 +169,20 @@ func (c *WsClient) readPump() {
 			var msgSend []byte
 
 			for _, room := range msg.Rooms {
-				slog.Info("join room", slog.String("subID", c.subID), slog.String("roomID", room))
-				c.psWsMsgAdapter.AddSubscriberToTopic(c.subID, room)
+				slog.Info("join room", slog.String("UID", c.UID), slog.String("roomID", room))
+				c.psWsMsgAdapter.AddSubscriberToTopic(c.UID, room)
+
+				// TODO add mutex
+				rooms, err := c.app.DB.Room.Get(room)
+				if !slices.Contains(rooms.Peers, c.UID) {
+					slog.Info("add peer to room", slog.String("UID", c.UID), slog.String("roomID", room))
+					rooms.Peers = append(rooms.Peers, c.UID)
+					rooms.ID = room
+					err = c.app.DB.Room.Add(rooms)
+					if err != nil {
+						slog.Error("not possible to add peer to room", slog.String("error", err.Error()))
+					}
+				}
 
 				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room, msg.LastConnectionTime)
 
@@ -146,7 +205,7 @@ func (c *WsClient) readPump() {
 						continue
 					}
 
-					slog.Debug("Message sent", slog.String("subID", c.subID), slog.String("roomID", room), slog.String("msgID:", m.ID))
+					slog.Debug("Message sent", slog.String("UID", c.UID), slog.String("roomID", room), slog.String("msgID:", m.ID))
 
 					c.send <- msgSend
 				}
@@ -190,6 +249,18 @@ func (c *WsClient) readPump() {
 			c.psWsMsgAdapter.Publish(msg.RoomID, message)
 			slog.Info("ICE Candidate published")
 
+		case domain.WsTypeSubscribePush:
+			msg := domain.Push{}
+
+			_ = json.Unmarshal(wsMsg.Data, &msg)
+
+			msg.ID = c.UID
+
+			err = c.app.DB.Push.Add(msg)
+			if err != nil {
+				slog.Error("not possible to add pushID", slog.String("error", err.Error()))
+			}
+			slog.Info("Subscribe Request received")
 		}
 	}
 }
@@ -207,12 +278,12 @@ func (c *WsClient) writePump() {
 			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
 				// There is no deadline set, so the connection is dead
-				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("subID:", c.subID))
+				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID))
 				return
 			}
 			if !ok {
 				// The channel is closed
-				slog.Error("channel closed from unsubscribe event", slog.String("subID:", c.subID))
+				slog.Error("channel closed from unsubscribe event", slog.String("UID:", c.UID))
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
@@ -223,7 +294,7 @@ func (c *WsClient) writePump() {
 			}
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			slog.Debug("send ping websocket message", slog.String("subID:", c.subID))
+			slog.Debug("send ping websocket message", slog.String("UID:", c.UID))
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
 			if err != nil {
 				return

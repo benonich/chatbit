@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -37,7 +36,14 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	clientUID := r.URL.Query().Get("client_uid")
+	if clientUID == "" {
+		http.Error(w, "missing client_uid", http.StatusBadRequest)
+		return
+	}
+
 	client := &WsClient{
+		UID:            clientUID,
 		conn:           conn,
 		send:           make(chan []byte, 256),
 		psWsMsgAdapter: h.psWsMsgAdapter,
@@ -49,9 +55,7 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go client.writePump()
 	go client.readPump()
 
-	client.subID = uuid.New().String()
-
-	_, _ = h.psWsMsgAdapter.SubscribeWithID(client.subID, client.subID, func(obj []byte) {
+	_, _ = h.psWsMsgAdapter.SubscribeWithID(client.UID, client.UID, func(obj []byte) {
 		client.send <- obj
 	})
 }

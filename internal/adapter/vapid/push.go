@@ -24,6 +24,10 @@ var (
 	subscription *webpush.Subscription // Demo: eine Subscription im Speicher
 )
 
+func init() {
+	GenerateVapID()
+}
+
 // GenerateVAPIDKeys will create a private and public VAPID key pair
 func GenerateVAPIDKeys() (privateKey, publicKey string, err error) {
 	// Get the private key from the P256 curve
@@ -53,6 +57,7 @@ func ensureVapidKeys(path string) (VapidKeys, error) {
 		if k.PublicKey != "" && k.PrivateKey != "" {
 			return k, nil
 		}
+		os.Setenv("VAPID_PUBLIC_KEY", k.PublicKey)
 	}
 
 	// sonst erzeugen

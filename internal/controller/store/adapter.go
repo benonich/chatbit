@@ -3,5 +3,5 @@ package store
 const (
 	PrefixRoom    = uint16(0)
 	PrefixMessage = uint16(1)
-	PrefixAlias   = uint16(2)
+	PrefixPush    = uint16(2)
 )

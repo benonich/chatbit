@@ -16,6 +16,7 @@ const (
 	WsTypeJoinRoom        WsMessageType = "join_rooms"
 	WsTypePresenceRequest WsMessageType = "presence_request"
 	WsTypePresenceAnswer  WsMessageType = "presence_answer"
+	WsTypeSubscribePush   WsMessageType = "sub_push"
 
 	WsTypeRTCOffer     WsMessageType = "rtc_offer"
 	WsTypeRTCAnswer    WsMessageType = "rtc_answer"

@@ -15,6 +15,7 @@ type Application struct {
 type DB struct {
 	Room    store.DBInternal[domain.Room]
 	Message store.DBMessageInternal[domain.Message]
+	Push    store.DBInternal[domain.Push]
 }
 
 type PS struct {
@@ -29,6 +30,7 @@ func NewApplication() *Application {
 		DB: DB{
 			Room:    store.NewAdapterInternal[domain.Room](database.NewAdapter[domain.Room](db)),
 			Message: store.NewMessageAdapterInternal[domain.Message](database.NewAdapterTs[domain.Message](db)),
+			Push:    store.NewAdapterInternal[domain.Push](database.NewAdapter[domain.Push](db)),
 		},
 		PS: PS{
 			Message: pubsub.NewAdapter[domain.Message](),
