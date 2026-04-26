@@ -25,6 +25,8 @@ func NewAdapterInternal[T ObjectInternal](db Database[T]) *AdapterInternal[T] {
 		prefix = convertUint16ToByte(PrefixMessage)
 	case domain.Push:
 		prefix = convertUint16ToByte(PrefixPush)
+	case domain.Peer:
+		prefix = convertUint16ToByte(PrefixPeer)
 	}
 
 	return &AdapterInternal[T]{

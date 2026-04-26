@@ -1,6 +1,7 @@
 package port
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -22,13 +23,8 @@ func (s *Server) StartFileServer() {
 }
 
 type fileHandler struct {
-	static      http.Handler
-	tmpl        *template.Template
-	vapidPubKey string
-}
-
-type PageData struct {
-	VAPIDPublicKey string
+	static    http.Handler
+	indexHTML []byte
 }
 
 func NewFileHandler(vapidPubKey string) (*fileHandler, error) {
@@ -37,17 +33,19 @@ func NewFileHandler(vapidPubKey string) (*fileHandler, error) {
 		return nil, fmt.Errorf("parse index.html: %w", err)
 	}
 
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, struct{ VAPIDPublicKey string }{vapidPubKey}); err != nil {
+		return nil, fmt.Errorf("render index.html: %w", err)
+	}
+
 	return &fileHandler{
-		static:      http.FileServer(http.Dir(StaticPath)),
-		tmpl:        tmpl,
-		vapidPubKey: vapidPubKey,
+		static:    http.FileServer(http.Dir(StaticPath)),
+		indexHTML: buf.Bytes(),
 	}, nil
 }
 
 func (h *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := filepath.Join(StaticPath, filepath.Clean(r.URL.Path))
-
-	slog.Debug("file server request", slog.String("path", path))
 
 	_, err := os.Stat(path)
 	switch {
@@ -64,12 +62,7 @@ func (h *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *fileHandler) serveIndex(w http.ResponseWriter, r *http.Request) {
+func (h *fileHandler) serveIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.Execute(w, PageData{
-		VAPIDPublicKey: h.vapidPubKey,
-	}); err != nil {
-		slog.Error("template render error", slog.String("error", err.Error()))
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-	}
+	w.Write(h.indexHTML)
 }

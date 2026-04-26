@@ -11,9 +11,9 @@ class WebSocketChannel {
 
     async _joinAllRooms(db_room){
         let rooms = await db_room.toArray();
-        let allRooms = rooms.map(room => room.id);
+        let allRooms = rooms.map(room => ({id: room.id, notification: room.push_notifications}));
 
-        console.log("join rooms " + allRooms)
+        console.log("join rooms", allRooms)
 
         const lastMsg = await db.chat.orderBy('timestamp').last();
         const last_connection_time = lastMsg ? lastMsg.timestamp : Date.now();
@@ -86,7 +86,7 @@ class WebSocketChannel {
 
     leaveRooms(msg){
         let wsMsg = {
-            type: "join_rooms",
+            type: "leave_rooms",
             data: msg,
         }
         this.conn.send(JSON.stringify(wsMsg));
@@ -133,24 +133,6 @@ async function handleIncomingMessage(msg) {
         case "presence_answer":
             GetPresenceAnswer(msg.data);
             break;
-        case "rtc_offer":
-            if(msg.data.offer.to === db_alias.uid) {
-                console.log("got offer from peer");
-                await rtc.handleOffer(msg.data);
-            }
-            break;
-        case "rtc_answer":
-            if(msg.data.answer.to === db_alias.uid) {
-                console.log("got answer from peer");
-                await rtc.handleAnswer(msg.data);
-            }
-            break;
-        case "rtc_candidate":
-            if(msg.data.candidate.to === db_alias.uid) {
-                console.log("got candidate from peer");
-                await rtc.handleCandidate(msg.data);
-            }
-            break;
         default:
             console.warn("Unknown message type:", msg.type);
     }
@@ -162,22 +144,27 @@ async function receiveMessageWS(item) {
 
      if ( item.room_id === room_id ){
         console.log("received message in room");
-        console.log(item);
 
         let msgD = await DecryptMsg(item.message);
 
-        let timeStamp = new Date(item.timestamp);
+        const timeStamp = new Date(item.timestamp);
+        const timeStamp_received = new Date(item.timeStamp_received);
 
         if (aliasIDD !== db_alias.uid){
-            AddMessageToRoom(msgD, aliasIDD, aliasD, timeStamp, item.protocol)
+            AddMessageToRoom(item.id, msgD, aliasIDD, aliasD, timeStamp, timeStamp_received, item.protocol)
         }
     }
 
-    if (aliasD !== db_alias.name){
+    if (aliasIDD !== db_alias.uid){
         await db.chat.add(item);
     }else{
+        await db.chat.update(item.id, {synced: true});
+        setMessageStatus(item.id, true);
         // add message is on the server side
     }
+
+    const el = $("#ct_room")[0];
+    el.scrollTop = el.scrollHeight;
 }
 
 async function joinAllRooms() {
@@ -185,9 +172,9 @@ async function joinAllRooms() {
 }
 
 
-function joinRooms(room_id) {
+function joinRooms(room_id, notification) {
     console.log("join room " + room_id)
-    ws.joinRooms({rooms: [room_id]});
+    ws.joinRooms({rooms: [{id: room_id, notification: notification}]});
     JoinRoomRTC(room_id)
 }
 

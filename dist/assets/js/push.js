@@ -7,22 +7,74 @@ function urlBase64ToUint8Array(base64String) {
     return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
+function isPushManagerActive(pushManager) {
+    if (!pushManager) {
+        if (!window.navigator.standalone) {
+            document.getElementById('add-to-home-screen').style.display = 'block';
+        } else {
+            throw new Error('PushManager is not active');
+        }
+        document.getElementById('subscribe_btn').style.display = 'none';
+        return false;
+    } else {
+        return true;
+    }
+}
+
+function arrayBufferToBase64url(buffer) {
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
 async function subscribe() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
         console.warn('Push not supported');
         return;
     }
 
-    const permission = await Notification.requestPermission();
+    let permission = await Notification.requestPermission();
+
+    if (permission !== 'granted') {
+        console.warn('Notification permission denied');
+        permission = Notification.permission;
+    }
+
     if (permission !== 'granted') {
         console.warn('Notification permission denied');
         return;
     }
 
+    let swRegistration = await navigator.serviceWorker.getRegistration();
+    let pushManager = swRegistration.pushManager;
+    if (!isPushManagerActive(pushManager)) {
+        return;
+    }
+
+    let subscriptionOptions = {
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    };
+
+    try {
+        let subscription = await pushManager.subscribe(subscriptionOptions);
+        ws.subscribePush({id: 0, endpoint: subscription.endpoint,
+            p256dh: arrayBufferToBase64url(subscription.getKey('p256dh')),
+            auth: arrayBufferToBase64url(subscription.getKey('auth'))});
+
+        // Here you can send fetch request with subscription data to your backend API for next push sends from there
+    } catch (error) {
+        console.warn('Some error occurred, unable to subscribe: ', error);
+    }
+
+    /*
+
     const registration = await navigator.serviceWorker.ready;
 
     // Bestehende Subscription prüfen
     let subscription = await registration.pushManager.getSubscription();
+
     if (!subscription) {
         subscription = await registration.pushManager.subscribe({
             userVisibleOnly: true,
@@ -33,7 +85,7 @@ async function subscribe() {
     ws.subscribePush({id: 0, endpoint: subscription.endpoint,
         p256dh: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh')))),
         auth: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth'))))});
-
+*/
     console.log('Push subscription saved');
 }
 

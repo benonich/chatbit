@@ -10,15 +10,8 @@ type WsMessage struct {
 type WsMessageType string
 
 const (
-	WsTypeWelcome         WsMessageType = "hello"
-	WsTypeMessage         WsMessageType = "message"
-	WsTypeLeaveRoom       WsMessageType = "leave_rooms"
-	WsTypeJoinRoom        WsMessageType = "join_rooms"
-	WsTypePresenceRequest WsMessageType = "presence_request"
-	WsTypePresenceAnswer  WsMessageType = "presence_answer"
-	WsTypeSubscribePush   WsMessageType = "sub_push"
-
-	WsTypeRTCOffer     WsMessageType = "rtc_offer"
-	WsTypeRTCAnswer    WsMessageType = "rtc_answer"
-	WsTypeRTCCandidate WsMessageType = "rtc_candidate"
+	WsTypeMessage       WsMessageType = "message"
+	WsTypeLeaveRoom     WsMessageType = "leave_rooms"
+	WsTypeJoinRoom      WsMessageType = "join_rooms"
+	WsTypeSubscribePush WsMessageType = "sub_push"
 )

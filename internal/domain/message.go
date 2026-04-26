@@ -3,16 +3,11 @@ package domain
 import "github.com/google/uuid"
 
 type Message struct {
-	ID        string            `json:"id,omitempty"`
-	RoomID    string            `json:"room_id,omitempty"`
-	Alias     string            `json:"alias,omitempty"`
-	AliasID   string            `json:"alias_id,omitempty"`
-	Message   string            `json:"message,omitempty"`
-	TimeStamp uint64            `json:"timestamp,omitempty"`
-	Received  []MessageReceived `json:"received,omitempty"` // Alias of the receivers
-}
-type MessageReceived struct {
+	ID        string `json:"id,omitempty"`
+	RoomID    string `json:"room_id,omitempty"`
+	Alias     string `json:"alias,omitempty"`
 	AliasID   string `json:"alias_id,omitempty"`
+	Message   string `json:"message,omitempty"`
 	TimeStamp uint64 `json:"timestamp,omitempty"`
 }
 

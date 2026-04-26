@@ -375,8 +375,6 @@ function GetPresenceAnswer(data){
 
     db.peer.add({alias_id:data.alias_id, room_id:data.room_id}).then(r => {})
 
-    rtc.init(data.room_id, data.alias_id)
-
     peers.set(data.alias_id, {
         connected: true,
         timestamp: new Date(),

@@ -58,11 +58,29 @@ func (c *WsClient) readPump() {
 		c.psWsMsgAdapter.Unsubscribe(c.UID)
 	}()
 
-	slog.Info("client connected", slog.String("UID:", c.UID))
+	slog.Info("peer connected", slog.String("peerID:", c.UID))
+
+	err := c.app.DB.Peer.Add(domain.Peer{
+		ID:       c.UID,
+		LastSeen: time.Now(),
+	})
+	if err != nil {
+		slog.Error("not possible update peer last connection time", slog.String("error", err.Error()))
+	}
+
 	c.conn.SetReadLimit(maxMessageSize)
+
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+
 	c.conn.SetPongHandler(func(string) error {
-		slog.Debug("received pong websocket message", slog.String("UID", c.UID))
+		err := c.app.DB.Peer.Add(domain.Peer{
+			ID:       c.UID,
+			LastSeen: time.Now(),
+		})
+		if err != nil {
+			slog.Error("not possible update peer last connection time", slog.String("error", err.Error()))
+		}
+
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
@@ -95,8 +113,6 @@ func (c *WsClient) readPump() {
 			}
 
 			c.app.PS.Message.Publish(msg)
-			//c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			//slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID))
 
 			room, err := c.app.DB.Room.Get(msg.RoomID)
 			if err != nil {
@@ -104,44 +120,52 @@ func (c *WsClient) readPump() {
 				continue
 			}
 			for _, peer := range room.Peers {
-				err = c.psWsMsgAdapter.PublishTo(msg.RoomID, peer, message)
+				err = c.psWsMsgAdapter.PublishTo(msg.RoomID, peer.ID, message)
 				if err != nil {
-					slog.Error("not possible to publish message, send Notification", slog.String("error", err.Error()))
-					pushID, err := c.app.DB.Push.Get(peer)
+					slog.Debug("not possible send message over ws, peer is offline", slog.String("peerID", peer.ID), slog.String("error", err.Error()))
+
+					p, err := c.app.DB.Peer.Get(peer.ID)
 					if err != nil {
-						slog.Error("not possible to get pushID", slog.String("error", err.Error()))
+						slog.Error("not possible to get peer", slog.String("error", err.Error()))
+					}
+
+					if p.LastSeen.Before(time.Now().Add(-24 * 7 * time.Hour)) {
+						slog.Info("peer offline, will be removed from room", slog.String("roomID", msg.RoomID), slog.String("peerID", peer.ID), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
+
+						r, err := c.app.DB.Room.Get(msg.RoomID)
+						if err != nil {
+							slog.Error("not possible to get room", slog.String("error", err.Error()))
+							continue
+						}
+
+						r.Peers = slices.DeleteFunc(r.Peers, func(v domain.RoomPeer) bool {
+							return v.ID == peer.ID
+						})
+
+						err = c.app.DB.Room.Add(r)
+						if err != nil {
+							slog.Error("not possible to update room", slog.String("error", err.Error()))
+							continue
+						}
+						nr, err := c.app.DB.Room.Get(r.ID)
+						if err != nil {
+							slog.Error("not possible to update room", slog.String("error", err.Error()))
+							continue
+						}
+
+						slog.Info("remove peer from room", slog.String("roomID", r.ID), slog.String("peerID", nr.ID))
+
 						continue
 					}
-					sub := &webpush.Subscription{
-						Endpoint: pushID.Endpoint,
-						Keys: webpush.Keys{
-							P256dh: pushID.P256DH,
-							Auth:   pushID.Auth,
-						},
-					}
-					slog.Debug("Message published", slog.String("roomID", msg.RoomID), slog.String("msgID:", msg.ID), slog.String("AliasID:", pushID.ID))
-					body, _ := json.Marshal(map[string]string{
-						"title": "ChatBit",
-						"body":  "NEW MESSAGE FROM ChatBit",
-						"url":   "/",
-					})
 
-					option := webpush.Options{
-						VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
-						VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
-						TTL:             30,
+					if peer.Notification {
+						slog.Info("send push notification", slog.String("peerID", peer.ID), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
+						c.sendPushNotification(peer.ID)
 					}
-
-					resp, err := webpush.SendNotification(body, sub, &option)
-					if err != nil {
-						slog.Error("not possible to send push notification", slog.String("error", err.Error()))
-					}
-					defer resp.Body.Close()
 
 					continue
 				}
 			}
-
 		case domain.WsTypeLeaveRoom:
 			msg := domain.LeaveRooms{}
 
@@ -153,7 +177,24 @@ func (c *WsClient) readPump() {
 
 			for _, room := range msg.Rooms {
 				slog.Info("leave room", slog.String("roomID", room), slog.String("UID:", c.UID))
-				c.psWsMsgAdapter.UnsubscribeFromTopic(c.UID, room)
+				c.psWsMsgAdapter.UnsubscribeFromTopic(room, c.UID)
+
+				// TODO add mutex maybe to storage
+				r, err := c.app.DB.Room.Get(room)
+				if err != nil {
+					slog.Error("not possible to get room", slog.String("error", err.Error()))
+					continue
+				}
+
+				r.Peers = slices.DeleteFunc(r.Peers, func(v domain.RoomPeer) bool {
+					return v.ID == c.UID
+				})
+
+				err = c.app.DB.Room.Add(r)
+				if err != nil {
+					slog.Error("not possible to update room", slog.String("error", err.Error()))
+					continue
+				}
 			}
 
 		case domain.WsTypeJoinRoom:
@@ -169,22 +210,21 @@ func (c *WsClient) readPump() {
 			var msgSend []byte
 
 			for _, room := range msg.Rooms {
-				slog.Info("join room", slog.String("UID", c.UID), slog.String("roomID", room))
-				c.psWsMsgAdapter.AddSubscriberToTopic(c.UID, room)
+				c.psWsMsgAdapter.AddSubscriberToTopic(c.UID, room.ID)
 
 				// TODO add mutex
-				rooms, err := c.app.DB.Room.Get(room)
-				if !slices.Contains(rooms.Peers, c.UID) {
-					slog.Info("add peer to room", slog.String("UID", c.UID), slog.String("roomID", room))
-					rooms.Peers = append(rooms.Peers, c.UID)
-					rooms.ID = room
+				rooms, err := c.app.DB.Room.Get(room.ID)
+				if !slices.ContainsFunc(rooms.Peers, func(peer domain.RoomPeer) bool { return peer.ID == c.UID }) {
+					slog.Info("add peer to room", slog.String("peer", c.UID), slog.String("roomID", room.ID))
+					rooms.Peers = append(rooms.Peers, domain.RoomPeer{ID: c.UID, Notification: room.Notification})
+					rooms.ID = room.ID
 					err = c.app.DB.Room.Add(rooms)
 					if err != nil {
 						slog.Error("not possible to add peer to room", slog.String("error", err.Error()))
 					}
 				}
 
-				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room, msg.LastConnectionTime)
+				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room.ID, msg.LastConnectionTime)
 
 				for _, m := range allMs {
 
@@ -205,49 +245,11 @@ func (c *WsClient) readPump() {
 						continue
 					}
 
-					slog.Debug("Message sent", slog.String("UID", c.UID), slog.String("roomID", room), slog.String("msgID:", m.ID))
+					slog.Debug("message sent", slog.String("UID", c.UID), slog.String("roomID", room.ID), slog.String("msgID:", m.ID))
 
 					c.send <- msgSend
 				}
 			}
-
-		case domain.WsTypePresenceRequest:
-			msg := domain.PresenceRequest{}
-
-			_ = json.Unmarshal(wsMsg.Data, &msg)
-
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Info("Presence Request published")
-
-		case domain.WsTypePresenceAnswer:
-			msg := domain.PresenceAnswer{}
-
-			_ = json.Unmarshal(wsMsg.Data, &msg)
-
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Info("Presence Answer published")
-
-		case domain.WsTypeRTCOffer:
-			msg := domain.Offer{}
-
-			_ = json.Unmarshal(wsMsg.Data, &msg)
-
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Info("RTC Offer published")
-		case domain.WsTypeRTCAnswer:
-			msg := domain.Answer{}
-
-			_ = json.Unmarshal(wsMsg.Data, &msg)
-
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Info("RTC Answer published")
-		case domain.WsTypeRTCCandidate:
-			msg := domain.Candidate{}
-
-			_ = json.Unmarshal(wsMsg.Data, &msg)
-
-			c.psWsMsgAdapter.Publish(msg.RoomID, message)
-			slog.Info("ICE Candidate published")
 
 		case domain.WsTypeSubscribePush:
 			msg := domain.Push{}
@@ -256,11 +258,12 @@ func (c *WsClient) readPump() {
 
 			msg.ID = c.UID
 
+			slog.Info("subscribe push notifications", slog.String("UID", c.UID))
+
 			err = c.app.DB.Push.Add(msg)
 			if err != nil {
 				slog.Error("not possible to add pushID", slog.String("error", err.Error()))
 			}
-			slog.Info("Subscribe Request received")
 		}
 	}
 }
@@ -292,13 +295,51 @@ func (c *WsClient) writePump() {
 			if err != nil {
 				return
 			}
+
+			ticker.Reset(pingPeriod)
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			slog.Debug("send ping websocket message", slog.String("UID:", c.UID))
 			err := c.conn.WriteMessage(websocket.PingMessage, nil)
 			if err != nil {
 				return
 			}
 		}
 	}
+}
+
+func (c *WsClient) sendPushNotification(peer string) {
+	pushID, err := c.app.DB.Push.Get(peer)
+	if err != nil {
+		slog.Error("not possible to get pushID", slog.String("error", err.Error()))
+	}
+
+	sub := &webpush.Subscription{
+		Endpoint: pushID.Endpoint,
+		Keys: webpush.Keys{
+			P256dh: pushID.P256DH,
+			Auth:   pushID.Auth,
+		},
+	}
+
+	slog.Debug("Message published", slog.String("peer:", peer), slog.String("AliasID:", pushID.ID))
+
+	body, _ := json.Marshal(map[string]string{
+		"title": "- ChatBit -",
+		"body":  "🔒 Neue Nachricht",
+		"url":   "/",
+	})
+
+	option := webpush.Options{
+		Subscriber:      "info@benoni.dev",
+		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
+		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+		TTL:             30,
+	}
+
+	resp, err := webpush.SendNotification(body, sub, &option)
+	if err != nil {
+		slog.Error("not possible to send push notification", slog.String("error", err.Error()))
+	}
+
+	defer resp.Body.Close()
 }

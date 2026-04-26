@@ -2,17 +2,22 @@
 <div id="appHeader">
 <div class="appHeader bg-primary text-light">
     <div class="left">
-        <a href="/main" class="headerButton goBack" id="goBackToMain">
+        <a href="/home" class="headerButton goBack" id="goBackToMain">
             <ion-icon name="chevron-back-outline"></ion-icon>
         </a>
     </div>
     <div class="pageTitle">
         <strong id="ro_room_name"></strong>
     </div>
-    <div class="right">
-        <a href="#" class="headerButton" onclick="ShareActiveRoom()">
-            <ion-icon name="share-social-outline"></ion-icon>
+    <div class="right dropdown">
+        <a href="#" class="headerButton" data-bs-toggle="dropdown" aria-expanded="false">
+            <ion-icon name="ellipsis-horizontal"></ion-icon>
         </a>
+        <div class="dropdown-menu dropdown-menu-end" style="">
+            <a class="dropdown-item" href="#" onclick="EditActiveRoom()"><i class="bi bi-pencil-square"></i> Edit</a>
+            <a class="dropdown-item" href="#" onclick="LeaveActiveRoomModal()"><i class="bi bi-trash"></i> Delete</a>
+            <a class="dropdown-item" href="#" onclick="ShareActiveRoom()"><ion-icon name="share-social-outline"></ion-icon> Share</a>
+        </div>
     </div>
 </div>
 </div>
@@ -20,7 +25,7 @@
 
 <div id="appContent">
 
-<div id="ct_room">
+<div id="ct_room" class="chatContent">
 
 </div>
 
@@ -50,7 +55,7 @@
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Secure Chat</h5>
+                <h5 class="modal-title">ChatBit</h5>
                 <a href="#" data-bs-dismiss="modal">Close</a>
             </div>
             <div class="modal-body">
@@ -68,6 +73,85 @@
     </div>
 </div>
 <!-- * Modal Share Room -->
+
+    <!-- Leave Room-->
+    <div class="modal fade dialogbox" id="ct_leave_room" data-bs-backdrop="static" tabindex="-1" style="display: none;" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Leave Room</h5>
+                </div>
+                <div class="modal-body">
+                    You want to leave this room?
+                </div>
+                <div class="modal-footer">
+                    <div class="btn-list">
+                        <a href="#" class="btn btn-text-danger btn-block" data-bs-dismiss="modal" onclick="LeaveActiveRoom()">
+                            <i class="bi bi-trash"></i>
+                            DELETE
+                        </a>
+                        <a href="#" class="btn btn-text-primary btn-block" data-bs-dismiss="modal">
+                            CANCEL
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- Modal Edit Room -->
+    <div class="modal fade modalbox" id="ct_edit_room" data-bs-backdrop="static" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">ChatBit</h5>
+                    <a href="#" data-bs-dismiss="modal">Close</a>
+                </div>
+                <div class="modal-body">
+                    <div class="login-form">
+                        <div class="section mt-2">
+                            <h1>Edit Room</h1>
+                            <h4>Fill the form to update the Chat Room</h4>
+                        </div>
+                        <div class="section mt-4 mb-5">
+                            <form action="javascript:UpdateRoom()" >
+                                <div class="form-group basic">
+                                    <div class="input-wrapper">
+                                        <label class="form-label" for="ct_edit_room_name">Room Name</label>
+                                        <input type="text" class="form-control" id="ct_edit_room_name"
+                                               placeholder="Room Name">
+                                        <i class="clear-input">
+                                            <ion-icon name="close-circle"></ion-icon>
+                                        </i>
+                                    </div>
+                                </div>
+
+                                <ul class="listview simple-listview">
+                                    <li>
+                                        <div>Push Notifications</div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="ct_edit_room_push">
+                                            <label class="form-check-label" for="ct_edit_room_push"></label>
+                                        </div>
+                                    </li>
+                                </ul>
+
+                                <div class="mt-2">
+                                    <button type="submit" class="btn btn-primary btn-block btn-lg">Update Room</button>
+                                </div>
+
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- * Modal Add Room -->
+
+
 
 <!-- Text tdo long-->
 <div id="ct_msg_maxlength" class="notification-box">
@@ -90,3 +174,4 @@
     </div>
 </div>
 </div>
+
