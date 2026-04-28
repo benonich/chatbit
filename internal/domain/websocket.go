@@ -13,5 +13,6 @@ const (
 	WsTypeMessage       WsMessageType = "message"
 	WsTypeLeaveRoom     WsMessageType = "leave_rooms"
 	WsTypeJoinRoom      WsMessageType = "join_rooms"
+	WsTypeCreateRoom    WsMessageType = "create_room"
 	WsTypeSubscribePush WsMessageType = "sub_push"
 )

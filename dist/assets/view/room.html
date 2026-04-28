@@ -15,8 +15,10 @@
         </a>
         <div class="dropdown-menu dropdown-menu-end" style="">
             <a class="dropdown-item" href="#" onclick="EditActiveRoom()"><i class="bi bi-pencil-square"></i> Edit</a>
-            <a class="dropdown-item" href="#" onclick="LeaveActiveRoomModal()"><i class="bi bi-trash"></i> Delete</a>
             <a class="dropdown-item" href="#" onclick="ShareActiveRoom()"><ion-icon name="share-social-outline"></ion-icon> Share</a>
+            <a class="dropdown-item" href="#" onclick="CleanActiveRoom()"><i class="bi bi-recycle"></i>Clean</a>
+            <a class="dropdown-item" href="#" onclick="LeaveActiveRoomModal()"><i class="bi bi-door-open"></i> Leave</a>
+
         </div>
     </div>
 </div>
@@ -33,7 +35,20 @@
 
     <!-- chat footer -->
     <div class="chatFooter">
-        <form action="javascript:await SendMessage()">
+
+        <form onsubmit="SendMessage(); return false">
+            <div class="dropdown">
+                <button class="btn btn-icon btn-primary rounded" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    <i class="bi bi-plus-lg"></i>
+                </button>
+                <div class="dropdown-menu" style="">
+                    <h6 class="dropdown-header">Send Data</h6>
+                    <a class="dropdown-item" href="#" onclick="document.getElementById('ct_img_input').click(); return false;">
+                        <i class="bi bi-image-fill"></i>Image
+                    </a>
+                </div>
+                <input type="file" id="ct_img_input" accept="image/*" style="display:none;" onchange="SendImage(this)">
+            </div>
             <div class="form-group boxed">
                 <div class="input-wrapper">
                     <textarea id="ct_msg_input" rows="1" class="form-control" oninput="auto_height(this)" style=" width: 100%;"></textarea>
@@ -43,7 +58,7 @@
                     </i>
                 </div>
             </div>
-            <button type="button" class="btn btn-icon btn-primary rounded" onclick="SendMessage()">
+            <button type="button" class="btn btn-icon btn-primary rounded" >
                 <ion-icon name="send"></ion-icon>
             </button>
         </form>
@@ -75,7 +90,7 @@
 <!-- * Modal Share Room -->
 
     <!-- Leave Room-->
-    <div class="modal fade dialogbox" id="ct_leave_room" data-bs-backdrop="static" tabindex="-1" style="display: none;" aria-hidden="true">
+    <div class="modal fade dialogbox" id="ct_leave_room" data-bs-backdrop="static" tabindex="-1" style="display: none;">
         <div class="modal-dialog" role="document">
             <div class="modal-content">
                 <div class="modal-header">
@@ -134,6 +149,27 @@
                                         <div class="form-check form-switch">
                                             <input class="form-check-input" type="checkbox" id="ct_edit_room_push">
                                             <label class="form-check-label" for="ct_edit_room_push"></label>
+                                        </div>
+                                    </li>
+                                    <li>
+                                        <div style="text-align: left" >Cloud Store</div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="ct_edit_room_store">
+                                            <label class="form-check-label" for="ct_edit_room_store"></label>
+                                        </div>
+                                    </li>
+
+                                    <li class="row" id="ct_edit_room_ttl_row" style="display: none;">
+                                        <div style="text-align: left" class="col-6" > - Delete After</div>
+                                        <div class="col-3 input-wrapper">
+                                            <input style="text-align: center" class="form-control" type="number" id="ct_edit_room_ttl" value="0">
+                                        </div>
+                                        <div class="col-3 input-wrapper">
+                                            <select class="form-control" id="ct_edit_room_ttl_unit">
+                                                <option value="60">min</option>
+                                                <option value="3600">hour</option>
+                                                <option value="86400">day</option>
+                                            </select>
                                         </div>
                                     </li>
                                 </ul>

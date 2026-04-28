@@ -129,7 +129,7 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicDifferentTopicsSameSub() {
 	})
 	s.NoError(err)
 
-	err = s.sut.AddSubscriberToTopic(subID, someTopic2.String())
+	err = s.sut.AddSubscriberToTopic(someTopic2.String(), subID)
 	s.NoError(err)
 
 	s.NoError(s.sut.Publish(someTopic1.String(), someInput1))

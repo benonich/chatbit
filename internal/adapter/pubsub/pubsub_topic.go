@@ -130,7 +130,7 @@ func (at *AdapterTopic[T]) Subscribe(topic string, update func(obj T)) (string, 
 }
 
 // AddSubscriberToTopic registers an existing subscriber to a new topic
-func (at *AdapterTopic[T]) AddSubscriberToTopic(subID string, newTopic string) error {
+func (at *AdapterTopic[T]) AddSubscriberToTopic(topic, subID string) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -143,16 +143,16 @@ func (at *AdapterTopic[T]) AddSubscriberToTopic(subID string, newTopic string) e
 		return fmt.Errorf("not possible to get subscriber %s: %w", subID, ErrSubscriberMissing)
 	}
 
-	subs, ok := at.subs[newTopic]
+	subs, ok := at.subs[topic]
 	if !ok {
 		subs = at.newTopicAdapter()
 
-		at.subs[newTopic] = subs
+		at.subs[topic] = subs
 	}
 
 	err = subs.AddSubscriber(subID, subT)
 	if err != nil {
-		return fmt.Errorf("not possible to add subscriber %s to topic %s: %w", subID, newTopic, err)
+		return fmt.Errorf("not possible to add subscriber %s to topic %s: %w", subID, topic, err)
 	}
 
 	return nil
@@ -185,16 +185,18 @@ func (at *AdapterTopic[T]) UnsubscribeFromTopic(topic, subID string) error {
 	var subsT chan T
 
 	subs, ok := at.subs[topic]
-	if ok {
-		subsT, err = subs.GetSubscriber(subID)
-		if err != nil {
-			return err
-		}
+	if !ok {
+		return ErrTopicMissing
+	}
 
-		err = subs.UnsubscribeNoClose(subID)
-		if err != nil {
-			return err
-		}
+	subsT, err = subs.GetSubscriber(subID)
+	if err != nil {
+		return err
+	}
+
+	err = subs.UnsubscribeNoClose(subID)
+	if err != nil {
+		return err
 	}
 
 	if len(subs.subs) == 0 {

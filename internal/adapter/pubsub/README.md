@@ -7,33 +7,19 @@ This document explains how to add and use the Pub/Sub library in another Go proj
 - Topic-based PubSub with Cache
 
 ## Requirements
-- Go 1.24+
+- Go 1.26+
 - Modules enabled (Go modules)
 
 ## Installation
 
 Add module to your `go.mod` and run `go mod tidy`:
-```go
-module your.module/path
 
-go 1.25
-
-require (
-    scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub vx.x.x
-)
-```
-Import in your code:
-```go
-import (
-pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub"
-)
-```
 ## High-level Concepts
 
 - Publisher: Sends messages to Subscriber.
 - Subscriber: Receives messages through callbacks.
 - Message: Arbitrary payload you define.
-- Topic (topic variants only): publisher send Topic Message only to subscribers subscribed to the same Topic.
+- Topic (topic variants only): publisher sends Topic Message only to subscribers subscribed to the same Topic.
 - Cache (cache variants only): Stores last TTL-scoped messages so that late subscribers can receive recent messages immediately on subscription.
 
 ## Choosing a Variant
@@ -51,16 +37,6 @@ pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub
 
 ### 1) Basic PubSub (no cache, no topics)
 ```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "time"
-
-    pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub"
-)
-
 func main() {
     ps := pubsub.NewAdapter() // create basic PubSub
     defer ps.Close()
@@ -90,15 +66,6 @@ received: hello world
 
 ### 2) PubSub with Cache
 ```go
-package main
-
-import (
-    "fmt"
-    "time"
-
-    pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub"
-)
-
 func main() {
     // Example: cache retains last messages for a TTL (10s)
     ps := pubsub.NewAdapterCache( time.Second * 10 )
@@ -132,15 +99,6 @@ received: C
 
 ### 3) Topic-based PubSub (no cache)
 ```go
-package main
-
-import (
-    "fmt"
-    "time"
-
-    pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub"
-)
-
 func main() {
     tps := pubsub.NewAdapterTopic() // topic-aware PubSub
     defer tps.Close()
@@ -173,15 +131,6 @@ metrics: cpu: 0.71
 
 ### 4) Topic-based PubSub with Cache
 ```go
-package main
-
-import (
-    "fmt"
-    "time"
-
-    pubsub "scm-01.karlstorz.com/neoip/ip-control/edgeplatform/common/libs/go/pubsub"
-)
-
 func main() {
     tps := pubsub.NewAdapterTopicCache(time.Second * 10)
     defer tps.Close()

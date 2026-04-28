@@ -1,13 +1,16 @@
 package domain
 
-import "github.com/google/uuid"
+import (
+	"log/slog"
+	"slices"
+
+	"github.com/google/uuid"
+)
 
 type Room struct {
-	ID      string     `json:"id,omitempty"`
-	Name    string     `json:"name,omitempty"`
-	Peers   []RoomPeer `json:"peers,omitempty"`
-	P2POnly bool       `json:"p2p_only,omitempty"` // should the room use P2P
-	TTL     int64      `json:"ttl,omitempty"`
+	ID    string     `json:"id,omitempty"`
+	Name  string     `json:"name,omitempty"`
+	Peers []RoomPeer `json:"peers,omitempty"`
 }
 
 type JoinRooms struct {
@@ -24,10 +27,30 @@ type LeaveRooms struct {
 	Rooms []string `json:"rooms,omitempty"`
 }
 
-func (r Room) GetID() string {
+func (r *Room) GetID() string {
 	return r.ID
 }
-func (r Room) GetIDByte() []byte {
+func (r *Room) GetIDByte() []byte {
 	parsedUUID, _ := uuid.Parse(r.ID)
 	return parsedUUID[:]
+}
+
+func (r *Room) RemovePeer(peerID string) {
+	r.Peers = slices.DeleteFunc(r.Peers, func(v RoomPeer) bool {
+		if v.ID == peerID {
+			slog.Debug("remove peer from room", slog.String("peer", peerID), slog.String("room", r.ID))
+			return true
+		}
+
+		return false
+	})
+}
+
+func (r *Room) AddPeer(peerID string, notification bool) {
+	if !slices.ContainsFunc(r.Peers, func(peer RoomPeer) bool {
+		return peer.ID == peerID
+	}) {
+		slog.Info("add peer to room", slog.String("peer", peerID), slog.String("room", r.ID))
+		r.Peers = append(r.Peers, RoomPeer{ID: peerID, Notification: notification})
+	}
 }

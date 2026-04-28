@@ -9,6 +9,8 @@ type Message struct {
 	AliasID   string `json:"alias_id,omitempty"`
 	Message   string `json:"message,omitempty"`
 	TimeStamp uint64 `json:"timestamp,omitempty"`
+	Store     bool   `json:"store,omitempty"`
+	TTL       int64  `json:"ttl,omitempty"`
 }
 
 func (m Message) GetID() string {

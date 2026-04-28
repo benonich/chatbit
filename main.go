@@ -12,6 +12,8 @@ import (
 	"github.com/SherClockHolmes/webpush-go"
 )
 
+const MaxMessageTTL = 60 * 60 * 24 * 30
+
 func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -25,7 +27,11 @@ func main() {
 	logger.Info("ChatBit start")
 
 	app.PS.Message.Subscribe(func(obj domain.Message) {
-		app.DB.Message.Add(obj)
+		if obj.TTL > MaxMessageTTL || obj.TTL <= 0 {
+			obj.TTL = MaxMessageTTL
+		}
+
+		app.DB.Message.AddWithTTL(obj, obj.TTL)
 	})
 
 	vapid.GenerateVapID()

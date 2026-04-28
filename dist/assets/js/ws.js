@@ -175,7 +175,6 @@ async function joinAllRooms() {
 function joinRooms(room_id, notification) {
     console.log("join room " + room_id)
     ws.joinRooms({rooms: [{id: room_id, notification: notification}]});
-    JoinRoomRTC(room_id)
 }
 
 function leaveRoom(room_id) {

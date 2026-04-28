@@ -1,7 +1,9 @@
 package database
 
 import (
+	"chatbit/internal/domain"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -97,6 +99,9 @@ func (a *Adapter[T]) GetObjectByID(ID []byte) (T, error) {
 		}
 		return nil
 	})
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return obj, domain.ErrObjNotFound
+	}
 	if err != nil {
 		return obj, fmt.Errorf("not possible to get object by ID from the database")
 	}

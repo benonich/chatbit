@@ -59,7 +59,7 @@ async function subscribe() {
 
     try {
         let subscription = await pushManager.subscribe(subscriptionOptions);
-        ws.subscribePush({id: 0, endpoint: subscription.endpoint,
+        ws.subscribePush({endpoint: subscription.endpoint,
             p256dh: arrayBufferToBase64url(subscription.getKey('p256dh')),
             auth: arrayBufferToBase64url(subscription.getKey('auth'))});
 

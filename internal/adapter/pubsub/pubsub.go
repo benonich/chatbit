@@ -26,9 +26,10 @@ var (
 	ErrMaxSub            = errors.New("pubsub adapter has reached max subscriber")
 	ErrDrops             = errors.New("message dropped by some subscriber")
 	ErrSubscriberMissing = errors.New("subscriber not found")
+	ErrTopicMissing      = errors.New("topic not found")
 )
 
-// Adapter represents an in-memory pub-sub model for managing subscribers and broadcasting messages concurrently.
+// Adapter represents an in-memory pub-sub for managing subscribers and broadcasting messages concurrently.
 type Adapter[T any] struct {
 	mu             sync.RWMutex
 	subs           map[string]chan T
@@ -37,7 +38,7 @@ type Adapter[T any] struct {
 	closed         bool
 }
 
-// NewAdapter initializes and returns a new instance of Adapter with default configurations and empty subscriber map.
+// NewAdapter initializes and returns a new instance of Adapter with default configurations and the empty subscriber map.
 func NewAdapter[T any]() *Adapter[T] {
 	ps := &Adapter[T]{}
 
@@ -146,7 +147,7 @@ func (ps *Adapter[T]) HasSubscriber(subID string) (bool, error) {
 	return exist, nil
 }
 
-// GetSubscriber checks if a subscriber with the given ID exists in the adapter, returning a boolean and an error.
+// AddSubscriber add a new subscriber to the adapter
 func (ps *Adapter[T]) AddSubscriber(subID string, sub chan T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
@@ -182,7 +183,7 @@ func (ps *Adapter[T]) GetSubscriber(subID string) (chan T, error) {
 	return sub, nil
 }
 
-// Subscribers retrieves a list of all active subscriber IDs. Returns an error if the adapter is closed.
+// Subscribers retrieve a list of all active subscriber IDs. Returns an error if the adapter is closed.
 func (ps *Adapter[T]) Subscribers() ([]string, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
@@ -217,13 +218,13 @@ func (ps *Adapter[T]) Unsubscribe(subID string) error {
 	return nil
 }
 
-// Unsubscribe removes the subscriber identified by the given subID, closing its channel and preventing further updates.
+// UnsubscribeNoClose removes the subscriber identified by the given subID, don't closing its channel
 func (ps *Adapter[T]) UnsubscribeNoClose(subID string) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	if ps.closed {
-		return fmt.Errorf("not possible to unsebscribe to a closed adapter: %w", ErrAlreadyClosed)
+		return fmt.Errorf("not possible to unsubscribe to a closed adapter: %w", ErrAlreadyClosed)
 	}
 
 	if _, ok := ps.subs[subID]; ok {

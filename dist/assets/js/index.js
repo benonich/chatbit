@@ -18,7 +18,8 @@ window.onload = async (event) => {
     console.log("init WS")
 
     await PageLoad();
-
+    
+    await subscribe();
 }
 
 async function PageLoad() {
@@ -49,14 +50,12 @@ async function PageLoad() {
             room_id = sessionStorage.getItem(SS_room_id);
             await ws.init(db.room);
             await PageLoadRoom();
-            await subscribe();
             break;
         case pageMain:
             console.log("init Main Page")
             $("#in_alias").text(db_alias.name);
             await ws.init(db.room);
             await PageLoadMain();
-            await subscribe();
             break;
         case pageLock:
             await PageLoadLock();

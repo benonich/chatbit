@@ -58,14 +58,20 @@ async function InitDatabase(){
     db_key = base64ToKey(sessionStorage.getItem(SS_key));
 }
 
+async function CleanActiveRoom(){
+    await db.chat.where('room_id').equals(room_id).delete();
+
+    $("#ct_room").html("");
+
+    timeStampNow = undefined;
+}
+
 
 function GetAllRooms(){
     $("#id_room_list").html("");
 
     db.room.toArray().then(arr => {
-        console.log(arr);
         arr.forEach(en => {
-
             decryptData(en.name, db_key).then(name => {
                 $("#id_room_list").append("    <li>\n" +
                     "                        <a href=\"/room\" data-id=\""+en.id+"\" class=\"item col\">\n" +
@@ -81,7 +87,6 @@ function GetAllRooms(){
             });
         });
     });
-
 
     document.getElementById('id_room_list').addEventListener('click', e => {
         const link = e.target.closest('a[data-id]');

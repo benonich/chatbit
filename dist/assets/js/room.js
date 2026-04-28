@@ -1,6 +1,8 @@
 let room_id;
 let room_name;
 let room_key;
+let room_ttl;
+let room_store;
 
 async function PageLoadLock() {
 
@@ -28,6 +30,15 @@ async function PageLoadMain() {
         e.preventDefault();
         JoinChat();
     });
+
+    $('#in_new_room_store').on('change', function () {
+        if ($(this).is(':checked')) {
+            $('#in_new_room_ttl_row').show();
+        } else {
+            $('#in_new_room_ttl_row').hide();
+        }
+    });
+
 }
 
 async function PageLoadLogin() {
@@ -48,11 +59,10 @@ async function PageLoadRoom() {
              room_name = k;
              $("#ro_room_name").text(room_name);
          });
+        room_ttl = roomObj.ttl;
+        room_store = roomObj.store;
+
     });
-
-    await LoadRoomKey();
-
-    await GetAllMessages();
 
     $("#ct_msg_input").on("keydown", async function(e) {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -60,6 +70,10 @@ async function PageLoadRoom() {
             await SendMessage();
         }
     });
+
+    await LoadRoomKey();
+
+    await GetAllMessages();
 
     console.log("room loaded")
 
@@ -69,6 +83,14 @@ async function PageLoadRoom() {
     document.getElementById('goBackToMain').addEventListener('click', e => {
         e.preventDefault();
         SetActualPage(pageMain);
+    });
+
+    $('#ct_edit_room_store').on('change', function () {
+        if ($(this).is(':checked')) {
+            $('#ct_edit_room_ttl_row').show();
+        } else {
+            $('#ct_edit_room_ttl_row').hide();
+        }
     });
 }
 
@@ -82,20 +104,25 @@ async function AddRoom(){
 
     const notification = $("#in_new_room_push").is(":checked");
 
+    // join room
+    joinRooms(room_id, notification);
+
     db.room.add({
         id: room_id,
         name: await encryptData($("#in_new_room_name").val(), db_key),
         key: await encryptData(key, db_key),
-        push_notifications: notification
+        push_notifications: notification,
+        store: $("#in_new_room_store").prop("checked"),
+        ttl: $("#in_new_room_ttl").val() * $("#in_new_room_ttl_unit").val()
     }).then(r => {
         $("#in_new_room_name").val("");
         $('#in_add_room').modal('hide');
         $("#in_new_room_push").prop("checked", false);
+        $("#in_new_room_ttl").val(0);
+        $("#in_new_room_ttl_unit").val(0);
+
         OpenRoom(room_id);
     });
-
-    // join room
-    joinRooms(room_id, notification);
 }
 
 async function UpdateRoom(){
@@ -104,12 +131,13 @@ async function UpdateRoom(){
 
     db.room.update(room_id, {
         name: await encryptData($("#ct_edit_room_name").val(), db_key),
-        push_notifications: notification
+        push_notifications: notification,
+        ttl: $("#ct_edit_room_ttl").val() * $("#ct_edit_room_ttl_unit").val(),
+        store: $("#ct_edit_room_store").prop("checked")
     }).then(r => {
         $("#ct_edit_room_name").val("");
         $('#ct_edit_room').modal('hide');
         $("#ct_edit_room_push").prop("checked", false);
-        PageLoadRoom()
     });
 
     // join room
@@ -198,6 +226,9 @@ async function DecryptMsg(msg) {
 }
 
 async function GetAllMessages() {
+    $("#ct_room").html("");
+    timeStampNow = undefined;
+
     let msgs = await db.chat.where({room_id:room_id}).limit(100).sortBy('timestamp');
 
     for (const msg of msgs) {
@@ -239,7 +270,9 @@ async function SendMessage() {
         message: msgE,
         Received: [],
         timestamp: timeStamp.getTime(),
-        synced: false
+        synced: false,
+        ttl: room_ttl,
+        store: room_store
     };
 
     $("#ct_msg_input").val("");
@@ -261,7 +294,6 @@ function LeaveActiveRoomModal(){
 }
 
 async function LeaveActiveRoom(){
-    ws.leaveRooms({rooms: [room_id]});
     await db.chat.where('room_id').equals(room_id).delete()
 
     await db.room.where('id').equals(room_id).delete();
@@ -284,6 +316,37 @@ function EditActiveRoom(){
         decryptData(roomObj.name, db_key).then(name => {
             $('#ct_edit_room_name').val(name);
             $("#ct_edit_room_push").prop("checked", roomObj.push_notifications);
+
+            const ttl = roomObj.ttl;
+
+            let ttl_unit = 60;
+
+            if (ttl > 86400) {
+                ttl_unit = 86400;
+            } else if (ttl > 3600) {
+                ttl_unit = 3600;
+            }
+
+            $("#ct_edit_room_ttl").val( ttl / ttl_unit);
+            $("#ct_edit_room_ttl_unit").val(ttl_unit);
+            $("#ct_edit_room_store").prop("checked", roomObj.store);
+
+            if ($('#ct_edit_room_store').is(':checked')) {
+                $('#ct_edit_room_ttl_row').show();
+            } else {
+                $('#ct_edit_room_ttl_row').hide();
+            }
         });
     });
+
+
+
+    $('#ct_edit_room_store').on('change', function () {
+        if ($(this).is(':checked')) {
+            $('#ct_edit_room_ttl_row').show();
+        } else {
+            $('#ct_edit_room_ttl_row').hide();
+        }
+    });
+
 }
