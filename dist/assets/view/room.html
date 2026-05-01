@@ -47,7 +47,7 @@
                         <i class="bi bi-image-fill"></i>Image
                     </a>
                 </div>
-                <input type="file" id="ct_img_input" accept="image/*" style="display:none;" onchange="SendImage(this)">
+                <input type="file" id="ct_img_input" accept="image/*" style="display:none;" onchange="SendFile(this);">
             </div>
             <div class="form-group boxed">
                 <div class="input-wrapper">
@@ -187,6 +187,19 @@
     </div>
     <!-- * Modal Add Room -->
 
+    <div class="modal fade dialogbox" id="ct_image" data-bs-backdrop="static" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <img id="modal-image" src="assets/img/sample/photo/1.jpg" alt="image" class="img-fluid">
+                <div class="modal-footer">
+                    <div class="btn-inline">
+                        <a href="#" class="btn btn-text-secondary" data-bs-dismiss="modal">CLOSE</a>
+                        <a href="#" class="btn btn-text-primary" data-bs-dismiss="modal" id="share-btn">SHARE</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
 
 <!-- Text tdo long-->
@@ -210,4 +223,7 @@
     </div>
 </div>
 </div>
+
+
+
 

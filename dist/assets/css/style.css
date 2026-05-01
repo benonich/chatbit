@@ -3421,7 +3421,7 @@ a.badge-dark {
 }
 
 .dialogbox .modal-dialog .modal-content {
-  max-width: 300px;
+  max-width: 500px;
   margin: auto;
   max-height: 560px;
   overflow: auto;

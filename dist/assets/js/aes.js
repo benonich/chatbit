@@ -56,6 +56,36 @@ const deriveKey = (passwordKey, salt, keyUsage) =>
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+async function encryptFile(fileOrBlob, key) {
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const buf = await fileOrBlob.arrayBuffer();
+
+    const encrypted = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        await key,
+        buf
+    );
+
+    const result = new Uint8Array(12 + encrypted.byteLength);
+    result.set(iv, 0);
+    result.set(new Uint8Array(encrypted), 12);
+    return result.buffer; // ArrayBuffer — kein Base64-Overhead
+}
+
+async function decryptFile(encryptedBuffer, mimeType, key) {
+    const data = new Uint8Array(encryptedBuffer);
+    const iv = data.slice(0, 12);
+    const payload = data.slice(12);
+
+    const decrypted = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        await key,
+        payload
+    );
+
+    return URL.createObjectURL(new Blob([decrypted], { type: mimeType }));
+}
+
 async function encryptData(secretData, key) {
     try {
         const iv = window.crypto.getRandomValues(new Uint8Array(12));

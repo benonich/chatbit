@@ -3,8 +3,10 @@ package port
 import (
 	"chatbit/internal/adapter/pubsub"
 	"chatbit/internal/core"
+	"chatbit/internal/domain"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -15,13 +17,13 @@ var upgrader = websocket.Upgrader{
 }
 
 type wsHandler struct {
-	psWsMsgAdapter *pubsub.AdapterTopic[[]byte]
+	psWsMsgAdapter *pubsub.AdapterTopic[WsOutbound]
 	app            *core.Application
 }
 
 func (s *Server) StartWebSocketServer() {
 	servWS := &wsHandler{
-		psWsMsgAdapter: pubsub.NewAdapterTopic[[]byte](),
+		psWsMsgAdapter: pubsub.NewAdapterTopic[WsOutbound](),
 		app:            s.app,
 	}
 
@@ -45,9 +47,11 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client := &WsClient{
 		UID:            clientUID,
 		conn:           conn,
-		send:           make(chan []byte, 256),
+		send:           make(chan WsOutbound, 256),
 		psWsMsgAdapter: h.psWsMsgAdapter,
 		app:            h.app,
+		fileTransfer:   make(map[string]*domain.Transfer),
+		fileTransferMu: sync.Mutex{},
 	}
 
 	// Allow collection of memory referenced by the caller by doing all work in
@@ -55,7 +59,7 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go client.writePump()
 	go client.readPump()
 
-	_, _ = h.psWsMsgAdapter.SubscribeWithID(client.UID, client.UID, func(obj []byte) {
+	_, _ = h.psWsMsgAdapter.SubscribeWithID(client.UID, client.UID, func(obj WsOutbound) {
 		client.send <- obj
 	})
 }

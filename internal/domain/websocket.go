@@ -10,9 +10,13 @@ type WsMessage struct {
 type WsMessageType string
 
 const (
-	WsTypeMessage       WsMessageType = "message"
-	WsTypeLeaveRoom     WsMessageType = "leave_rooms"
-	WsTypeJoinRoom      WsMessageType = "join_rooms"
-	WsTypeCreateRoom    WsMessageType = "create_room"
-	WsTypeSubscribePush WsMessageType = "sub_push"
+	WsTypeMessage           WsMessageType = "message"
+	WsTypeLeaveRoom         WsMessageType = "leave_rooms"
+	WsTypeJoinRoom          WsMessageType = "join_rooms"
+	WsTypeCreateRoom        WsMessageType = "create_room"
+	WsTypeSubscribePush     WsMessageType = "sub_push"
+	WsTypeFileTransferStart WsMessageType = "transfer_start"
+	WsTypeFileTransferDone  WsMessageType = "transfer_done"
+	WsTypeFileTransferACK   WsMessageType = "transfer_ack"
+	WsTypeFileTransferNACK  WsMessageType = "transfer_nack"
 )

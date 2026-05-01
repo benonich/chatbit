@@ -47,7 +47,13 @@ async function InitDatabase(){
         peer: `
                     &[alias_id+room_id],
                     alias_id,
-                    room_id`
+                    room_id`,
+        file:`
+                    &id,
+                    room_id,
+                    blob,
+                    filename,
+                    mime_type`
     });
 
     console.log("check if alias exist")
@@ -60,6 +66,7 @@ async function InitDatabase(){
 
 async function CleanActiveRoom(){
     await db.chat.where('room_id').equals(room_id).delete();
+    await db.file.where('room_id').equals(room_id).delete();
 
     $("#ct_room").html("");
 

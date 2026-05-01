@@ -1,7 +1,12 @@
+const CHUNK_SIZE = 64 * 1024; // 64KB
+
 class WebSocketChannel {
     constructor(onMessageReceived) {
         this.conn = null;
         this.onMessageReceived = onMessageReceived;
+        this._pendingAck = null;
+        this._bufferedAcks = new Map();
+        this._incomingTransfers = new Map();
     }
 
     _getEndpoint() {
@@ -40,7 +45,15 @@ class WebSocketChannel {
                     this.init(db_room);
                 };
 
-                this.conn.onmessage = this.onMessageReceived;
+                this.conn.onmessage = (e) => {
+                    if (e.data instanceof ArrayBuffer) {
+                        this._handleIncomingChunk(e.data);
+                    } else {
+                        this.onMessageReceived(e);
+                    }
+                }
+
+                this.conn.binaryType = "arraybuffer";
 
                 this.conn.onopen = () => {
                     console.log("WS Connection connected");
@@ -101,6 +114,117 @@ class WebSocketChannel {
         this.conn.send(JSON.stringify(wsMsg));
     }
 
+    // incoming transfer <-
+    handleTransferStart(id, room_id, mime_type, timestamp, chunks_total, chunk_size) {
+        this._incomingTransfers.set(id, {
+            room_id: room_id,
+            mime_type: mime_type,
+            timestamp: timestamp,
+            chunks: new Array(chunks_total).fill(null),
+            chunks_size: chunk_size,
+            received: 0,
+            chunks_total: chunks_total,
+        });
+    }
+
+    _handleIncomingChunk(data) {
+        const view = new DataView(data);
+        const uuidBytes = new Uint8Array(data, 0, 16);
+        const id = [
+            uuidBytes.slice(0,4), uuidBytes.slice(4,6),
+            uuidBytes.slice(6,8), uuidBytes.slice(8,10),
+            uuidBytes.slice(10,16),
+        ].map(b => Array.from(b).map(x => x.toString(16).padStart(2,'0')).join('')).join('-');
+
+        const chunkId = view.getUint32(16, false);
+        const encrypted = data.slice(20);
+
+        const t = this._incomingTransfers.get(id);
+        if (!t) return;
+
+        t.chunks[chunkId] = encrypted;
+        t.received++;
+    }
+
+    async getIncomingTransfer(fileId) {
+        const t = this._incomingTransfers.get(fileId);
+        if (!t) throw new Error("unknown transfer");
+
+        return t
+    }
+
+    async deleteIncomingTransfer(fileId) {
+        this._incomingTransfers.delete(fileId);
+    }
+
+    // outgoing transfer ->
+    transferStart(msg){
+        let wsMsg = {
+            type: "transfer_start",
+            data: msg,
+        }
+        this.conn.send(JSON.stringify(wsMsg));
+    }
+
+    async sendFile(buf, totalChunks, id) {
+
+        for (let i = 0; i < totalChunks; i++) {
+            await this.waitForAck(id, i); // Flow control
+            const start = i * CHUNK_SIZE;
+            const chunk = buf.slice(start, start + CHUNK_SIZE);
+
+            // Chunk-Header: 16 bytes UUID + 4 bytes index
+            const header = this.encodeChunkHeader(id, i);
+            const packet = this.concat(header, chunk);
+
+            this.conn.send(packet);
+        }
+
+        this.conn.send(JSON.stringify({ type: 'transfer_done', data: {id: id} }));
+    }
+
+    encodeChunkHeader(id, index) {
+        // Format: [16 bytes UUID als bytes][4 bytes uint32 chunk index]
+        const buf = new ArrayBuffer(20);
+        const view = new DataView(buf);
+        const uuidBytes = id.replace(/-/g, '')
+            .match(/.{2}/g)
+            .map(h => parseInt(h, 16));
+        uuidBytes.forEach((b, i) => view.setUint8(i, b));
+        view.setUint32(16, index, false); // big-endian
+        return buf;
+    }
+
+    concat(a, b) {
+        const tmp = new Uint8Array(a.byteLength + b.byteLength);
+        tmp.set(new Uint8Array(a), 0);
+        tmp.set(new Uint8Array(b), a.byteLength);
+        return tmp.buffer;
+    }
+
+    resolveAck(id, chunkIndex) {
+        if (this._pendingAck &&
+            id === this._pendingAck.id &&
+            chunkIndex === this._pendingAck.chunkIndex) {
+            this._pendingAck.resolve();
+            this._pendingAck = null;
+        } else {
+            // ACK kam vor waitForAck → puffern
+            this._bufferedAcks.set(`${id}:${chunkIndex}`, true);
+        }
+    }
+
+    waitForAck(id, chunkIndex) {
+        console.log("wait for ack", id, chunkIndex, this._pendingAck)
+        const key = `${id}:${chunkIndex}`;
+        if (this._bufferedAcks.has(key)) {
+            this._bufferedAcks.delete(key);
+            return Promise.resolve();
+        }
+        return new Promise(resolve => {
+            this._pendingAck = { id, chunkIndex, resolve };
+        });
+    }
 }
 
 const wsMessageHandler = async (evt) => {
@@ -127,11 +251,43 @@ async function handleIncomingMessage(msg) {
             await receiveMessageWS(msg.data);
             console.log("received new message");
             break;
-        case "presence_request":
-            SendPresenceAnswer(msg.data);
+        case "transfer_ack":
+            console.log("received ack", msg);
+            ws.resolveAck(msg.data.id, msg.data.chunk)
             break;
-        case "presence_answer":
-            GetPresenceAnswer(msg.data);
+        case "transfer_nack":
+            console.log("received nack");
+            break;
+        case "transfer_start":
+            ws.handleTransferStart(msg.data.id, msg.data.room_id, msg.data.mime_type, msg.data.timestamp, msg.data.chunks_total)
+            break;
+        case "transfer_done":
+            console.log("received done", msg.data);
+            const t = await ws.getIncomingTransfer(msg.data.id);
+
+            console.log("transaction", t);
+
+            const totalLength = t.chunks.reduce((sum, c) => sum + c.byteLength, 0);
+
+            const combined = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of t.chunks) {
+                combined.set(new Uint8Array(chunk), offset);
+                offset += chunk.byteLength;
+            }
+            const buffer = combined.buffer;
+
+            console.log("combined", buffer);
+
+            await db.file.add({
+                id: msg.data.id,
+                room_id: t.room_id,
+                blob: buffer,
+                mime_type: t.mime_type,
+                timestamp: t.timestamp,
+            })
+
+            await ws.deleteIncomingTransfer(msg.data.id);
             break;
         default:
             console.warn("Unknown message type:", msg.type);
@@ -148,16 +304,20 @@ async function receiveMessageWS(item) {
         let msgD = await DecryptMsg(item.message);
 
         const timeStamp = new Date(item.timestamp);
-        const timeStamp_received = new Date(item.timeStamp_received);
 
         if (aliasIDD !== db_alias.uid){
-            AddMessageToRoom(item.id, msgD, aliasIDD, aliasD, timeStamp, timeStamp_received, item.protocol)
+            AddMessageToRoom(item.id, msgD, aliasIDD, aliasD, timeStamp, item.synced, item.type)
         }
     }
 
+
+
     if (aliasIDD !== db_alias.uid){
+        console.log("received not own message", item);
         await db.chat.add(item);
     }else{
+        console.log("received own message", item);
+
         await db.chat.update(item.id, {synced: true});
         setMessageStatus(item.id, true);
         // add message is on the server side

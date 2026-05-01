@@ -47,6 +47,24 @@ func (at *AdapterTopic[T]) Publish(topic string, obj T) error {
 	return nil
 }
 
+// PublishExclude
+func (at *AdapterTopic[T]) PublishExclude(topic, subID string, obj T) error {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+
+	if at.closed {
+		return ErrAlreadyClosed
+	}
+
+	subs, ok := at.subs[topic]
+	if ok {
+		return subs.PublishExclude(subID, obj)
+	}
+
+	// if there has no subscriber for this topic do nothing
+	return nil
+}
+
 // PublishTo sends an object to a specific subscriber of a topic using the subscriber's unique ID.
 // Returns an error if the topic or subscriber ID is not found.
 // No operation is performed if the topic has no subscribers.

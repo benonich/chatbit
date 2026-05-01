@@ -79,6 +79,39 @@ func (ps *Adapter[T]) Publish(obj T) error {
 	return nil
 }
 
+// PublishExclude sends the provided object to all active subscribers exclude the added subscriber ID, skipping over any full channels without blocking.
+// Returns an error if the adapter is closed or if any subscribers drop the message.
+func (ps *Adapter[T]) PublishExclude(subID string, obj T) error {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+
+	if ps.closed {
+		return fmt.Errorf("not possible to publish to subscribers from a closed adapter: %w", ErrAlreadyClosed)
+	}
+
+	dropped := 0
+
+	for id, ch := range ps.subs {
+		// skip the message if the subscriber is the one who send the message
+		if subID == id {
+			continue
+		}
+
+		// drop the message if chan buffer is full to avoid blocking state
+		select {
+		case ch <- obj:
+		default:
+			dropped++
+		}
+	}
+
+	if dropped > 0 {
+		return fmt.Errorf("%d susbscriber dropped the message :%w", dropped, ErrDrops)
+	}
+
+	return nil
+}
+
 // Subscribe registers an update callback to receive published messages and returns a unique subscription ID or an error.
 func (ps *Adapter[T]) Subscribe(update func(obj T)) (string, error) {
 	subID := uuid.New().String()
@@ -112,6 +145,30 @@ func (ps *Adapter[T]) SubscribeWithID(subID string, handler func(obj T)) (string
 // PublishTo sends an object to a specific subscriber channel using the subscriber's unique ID.
 // Returns an error if the adapter is closed or the operation fails.
 func (ps *Adapter[T]) PublishTo(subID string, obj T) error {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+
+	if ps.closed {
+		return fmt.Errorf("not possible to publish to a subscriber from a closed adapter: %w", ErrAlreadyClosed)
+	}
+
+	ch, ok := ps.subs[subID]
+	if !ok {
+		return fmt.Errorf("cna't found subscriber id: %w", ErrSubscriberMissing)
+	}
+
+	select {
+	case ch <- obj:
+	default:
+		return fmt.Errorf("buffer overflow from subscriber: %w", ErrDrops)
+	}
+
+	return nil
+}
+
+// PublishTo sends an object to a specific subscriber channel using the subscriber's unique ID.
+// Returns an error if the adapter is closed or the operation fails.
+func (ps *Adapter[T]) PublishToExclude(subID string, obj T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 

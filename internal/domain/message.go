@@ -4,6 +4,7 @@ import "github.com/google/uuid"
 
 type Message struct {
 	ID        string `json:"id,omitempty"`
+	Type      int64  `json:"type,omitempty"` // 0: text, 1: image, 2: file
 	RoomID    string `json:"room_id,omitempty"`
 	Alias     string `json:"alias,omitempty"`
 	AliasID   string `json:"alias_id,omitempty"`

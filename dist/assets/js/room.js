@@ -144,7 +144,7 @@ async function UpdateRoom(){
     joinRooms(room_id, notification);
 }
 
-function AddMessageToRoom(id, msg, alias_id, alias, timeStamp, synced){
+function AddMessageToRoom(id, msg, alias_id, alias, timeStamp, synced, typeI){
     let isOnBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 25);
 
     if(timeStampNow === undefined || timeStampNow.getDate() !== timeStamp.getDate() || timeStampNow.getMonth() !== timeStamp.getMonth() || timeStampNow.getFullYear() !== timeStamp.getFullYear()){
@@ -161,9 +161,16 @@ function AddMessageToRoom(id, msg, alias_id, alias, timeStamp, synced){
     if(alias_id !== db_alias.uid){
         msgHtml += "                <div class=\"title\" alias-id='"+alias_id+"'>"+alias+"</div>\n";
     }
-    msgHtml += "                <div class=\"bubble text-line-break\">\n" + $("<div/>").text(msg).html() + "\n" +
+    console.log("typeI:", typeI)
+    if(typeI === 1){
+        msg = "<button type=\"button\" class=\"btn btn-secondary\" onclick='showImageModal(\""+id+"\", \""+msg+"\")'>Image</button>"
+    }else{
+        msg = $("<div/>").text(msg).html();
+    }
+    msgHtml += "                <div class=\"bubble text-line-break\">\n" + msg + "\n" +
     "                </div>\n" +
     "                <div class=\"footer\">"+timeStamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})+ " ";
+
     if(alias_id === db_alias.uid){
         msgHtml += renderStatus(synced);
     }
@@ -199,7 +206,11 @@ function setMessageStatus(uuid, synced) {
     } else {
         footer.append('<ion-icon name="checkmark-outline"></ion-icon>');
     }
+
+    console.log("set status", synced)
 }
+
+
 
 function AddDateToRoom(timeStamp){
     const msgHtml = "<div class=\"message-divider\">" + timeStamp.toDateString() + "</div>";
@@ -238,8 +249,68 @@ async function GetAllMessages() {
         let timeStamp = new Date(msg.timestamp);
         let timeStamp_received = new Date(msg.timestamp_received);
 
-        AddMessageToRoom(msg.id, msgD, aliasIDD, aliasD, timeStamp, timeStamp_received, msg.protocol);
+
+        console.log("msgT:", msg.type)
+        AddMessageToRoom(msg.id, msgD, aliasIDD, aliasD, timeStamp, msg.synced, msg.type);
     }
+}
+
+async function SendFile(f) {
+    // ignore empty messages
+    if(f.files.length === 0){
+        return
+    }
+
+    const file = f.files[0];
+
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+    let timeStamp = new Date();
+
+    let msgB = await EncryptMsg(file.type);
+    let aliasE = await EncryptMsg(db_alias.name);
+    let aliasIDE = await EncryptMsg(db_alias.uid);
+
+    let msg = {
+        id: createUUID(),
+        room_id: room_id,
+        alias: aliasE,
+        alias_id: aliasIDE,
+        message: msgB,
+        timestamp: timeStamp.getTime(),
+        synced: false,
+        ttl: room_ttl,
+        store: room_store,
+        type: 1,
+
+        mime_type: file.type,
+        total_size: file.size,
+
+        chunk_size: CHUNK_SIZE,
+        chunks_total: totalChunks,
+    };
+
+    ws.transferStart(msg)
+
+    AddMessageToRoom(msg.id, file.type, db_alias.uid, db_alias.name, timeStamp, false, msg.type);
+
+    const fileEnc = await encryptFile(file, room_key)
+
+    await db.file.add({
+        id: msg.id,
+        room_id: room_id,
+        blob: fileEnc,
+        mime_type: file.type,
+        timestamp: timeStamp.getTime(),
+    })
+
+    await ws.sendFile(fileEnc, totalChunks, msg.id);
+
+    f.files = null;
+
+    db.chat.add(msg);
+
+    ws.sendMessage(msg);
 }
 
 async function SendMessage() {
@@ -278,7 +349,7 @@ async function SendMessage() {
     $("#ct_msg_input").val("");
     $("#ct_msg_input")[0].oninput();
 
-    AddMessageToRoom(msg.id, msgRaw, db_alias.uid, db_alias.name, timeStamp, false, msg.protocol);
+    AddMessageToRoom(msg.id, msgRaw, db_alias.uid, db_alias.name, timeStamp, false, msg.type);
     db.chat.add(msg);
 
     ws.sendMessage(msg);
@@ -349,4 +420,60 @@ function EditActiveRoom(){
         }
     });
 
+}
+
+
+async function showImageModal(fileId) {
+    const file = await db.file.get(fileId);
+    if (!file) return;
+
+    const url = await decryptFile(file.blob, "image/jpg", room_key);
+
+    console.log("Image URL:", url);
+
+    const img = document.querySelector('#ct_image img');
+
+    if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
+
+    img.src = url;
+    img.dataset.objectUrl = url;
+
+    $("#ct_image").modal('show');
+
+
+    document.getElementById('share-btn').addEventListener('click', async (e) => {
+        e.preventDefault();
+        const imgSrc = document.getElementById('modal-image').src;
+
+        // Web Share API (iPhone/Android)
+        if (navigator.share) {
+            try {
+                const response = await fetch(imgSrc);
+                const blob = await response.blob();
+                const file = new File([blob], 'image.jpg', { type: blob.type });
+
+                await navigator.share({
+                    files: [file],
+                    title: 'Image',
+                });
+            } catch (err) {
+                if (err.name !== 'AbortError') console.error(err);
+            }
+        } else {
+            // Fallback: Download
+            const a = document.createElement('a');
+            a.href = imgSrc;
+            a.download = 'image.jpg';
+            a.click();
+        }
+    });
+
+    $("#ct_image").on('hidden.bs.modal', () => {
+        const img = document.querySelector('#ct_image img');
+        if (img.dataset.objectUrl) {
+            URL.revokeObjectURL(img.dataset.objectUrl);
+            delete img.dataset.objectUrl;
+            img.src = '';
+        }
+    });
 }
