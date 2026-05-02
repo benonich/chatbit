@@ -114,8 +114,18 @@ class WebSocketChannel {
         this.conn.send(JSON.stringify(wsMsg));
     }
 
+    transferRequest(msg){
+        let wsMsg = {
+            type: "transfer_request",
+            data: msg,
+        }
+        this.conn.send(JSON.stringify(wsMsg));
+    }
+
     // incoming transfer <-
     handleTransferStart(id, room_id, mime_type, timestamp, chunks_total, chunk_size) {
+        console.log("handle transfer start", id, room_id, mime_type, timestamp, chunks_total, chunk_size);
+
         this._incomingTransfers.set(id, {
             room_id: room_id,
             mime_type: mime_type,
@@ -140,7 +150,9 @@ class WebSocketChannel {
         const encrypted = data.slice(20);
 
         const t = this._incomingTransfers.get(id);
+        console.log("handle incoming chunk", id, chunkId);
         if (!t) return;
+
 
         t.chunks[chunkId] = encrypted;
         t.received++;
@@ -259,13 +271,13 @@ async function handleIncomingMessage(msg) {
             console.log("received nack");
             break;
         case "transfer_start":
-            ws.handleTransferStart(msg.data.id, msg.data.room_id, msg.data.mime_type, msg.data.timestamp, msg.data.chunks_total)
+            console.log("transfer_start", msg.data);
+            ws.handleTransferStart(msg.data.id, msg.data.room_id, msg.data.mime_type, msg.data.timestamp, msg.data.chunks_total, msg.data.chunk_size)
             break;
         case "transfer_done":
             console.log("received done", msg.data);
-            const t = await ws.getIncomingTransfer(msg.data.id);
 
-            console.log("transaction", t);
+            const t = await ws.getIncomingTransfer(msg.data.id);
 
             const totalLength = t.chunks.reduce((sum, c) => sum + c.byteLength, 0);
 
@@ -288,6 +300,10 @@ async function handleIncomingMessage(msg) {
             })
 
             await ws.deleteIncomingTransfer(msg.data.id);
+
+            window.dispatchEvent(new CustomEvent('file_ready', {
+                detail: { fileId: msg.data.id }
+            }));
             break;
         default:
             console.warn("Unknown message type:", msg.type);

@@ -23,16 +23,10 @@ async function InitDatabase(){
         alias: ` 
                     &id,
                     &uid, 
-                    verify,
-                    name,
-                    salt,
-                    vi`,
+                    name`,
         chat: `
                     &id,
                     room_id,
-                    alias,
-                    alias_id,
-                    message,
                     synced,
                     protocol,
                     timestamp`,
@@ -40,10 +34,7 @@ async function InitDatabase(){
                     &id,
                     name,
                     key,
-                    push_notifications,
-                    P2P,
-                    WebRTC,
-                    Cloud`,
+                    push_notifications`,
         peer: `
                     &[alias_id+room_id],
                     alias_id,
@@ -51,7 +42,6 @@ async function InitDatabase(){
         file:`
                     &id,
                     room_id,
-                    blob,
                     filename,
                     mime_type`
     });

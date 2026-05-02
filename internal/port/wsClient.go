@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -347,6 +348,17 @@ func (c *WsClient) readPump() {
 				slog.Error("not possible to add pushID", slog.String("error", err.Error()))
 				continue
 			}
+
+		case domain.WsTypeFileTransferRequest:
+			var file = &domain.File{}
+
+			err = json.Unmarshal(wsMsg.Data, file)
+			if err != nil {
+				slog.Error("transfer_start parse error", slog.String("error", err.Error()))
+				continue
+			}
+
+			c.sendFileTransferStart(file.ID)
 		}
 	}
 }
@@ -430,6 +442,74 @@ func (c *WsClient) sendPushNotification(peer string) {
 
 const FileTTL = 60 * 60 * 24 * 7
 const FileDir = "/Users/benoni/code/benoni/chatbit/files"
+
+func (c *WsClient) sendFileTransferStart(fileId string) error {
+	hdr, err := c.app.DB.File.Get(fileId)
+
+	f, err := os.Open(filepath.Join(FileDir, hdr.ID))
+	if err != nil {
+		slog.Error("cannot create temp file", slog.String("error", err.Error()))
+		return err
+	}
+
+	slog.Info("transfer request started", slog.String("file", hdr.ID), slog.Int64("size", hdr.TotalSize))
+
+	transB, _ := json.Marshal(hdr)
+
+	msg := domain.WsMessage{
+		Type: string(domain.WsTypeFileTransferStart),
+		Data: transB,
+	}
+
+	msgB, _ := json.Marshal(msg)
+
+	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: msgB}
+
+	buf := make([]byte, hdr.ChunkSize)
+	index := 0
+
+	ub, err := uuid.Parse(hdr.ID)
+	if err != nil {
+		return err
+	}
+
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			packet := make([]byte, 16+4+len(buf[:n]))
+			copy(packet[0:16], ub[:])
+			binary.BigEndian.PutUint32(packet[16:20], uint32(index))
+			copy(packet[20:], buf[:n])
+			c.send <- WsOutbound{MsgType: websocket.BinaryMessage, Data: packet}
+			index++
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	msgB, err = json.Marshal(hdr.Message)
+	if err != nil {
+		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+	}
+
+	wsMsg := domain.WsMessage{
+		Type: string(domain.WsTypeFileTransferDone),
+		Data: msgB,
+	}
+
+	wsMsgB, err := json.Marshal(wsMsg)
+	if err != nil {
+		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+	}
+
+	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB}
+
+	return nil
+}
 
 func (c *WsClient) handleTransferStart(hdr *domain.File) {
 

@@ -163,7 +163,7 @@ function AddMessageToRoom(id, msg, alias_id, alias, timeStamp, synced, typeI){
     }
     console.log("typeI:", typeI)
     if(typeI === 1){
-        msg = "<button type=\"button\" class=\"btn btn-secondary\" onclick='showImageModal(\""+id+"\", \""+msg+"\")'>Image</button>"
+        msg = "<button type=\"button\" class=\"btn btn-secondary\" onclick='getOrRequestFile(\""+id+"\", (file) => {showImageModal(file);})'>Image</button>"
     }else{
         msg = $("<div/>").text(msg).html();
     }
@@ -261,7 +261,9 @@ async function SendFile(f) {
         return
     }
 
-    const file = f.files[0];
+    const inputFile = f.files[0];
+
+    const file = await limitToHD(inputFile);
 
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
@@ -311,6 +313,38 @@ async function SendFile(f) {
     db.chat.add(msg);
 
     ws.sendMessage(msg);
+}
+
+async function limitToHD(file, quality = 0.85) {
+    const MAX = 2560;
+
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(file);
+    } catch (e) {
+        console.warn('Image decode failed, sending original:', file.type, e);
+        return file;
+    }
+
+    if (bitmap.width <= MAX && bitmap.height <= MAX) {
+        return file;
+    }
+
+    const scale = Math.min(MAX / bitmap.width, MAX / bitmap.height);
+    const width  = Math.round(bitmap.width  * scale);
+    const height = Math.round(bitmap.height * scale);
+
+    const canvas = new OffscreenCanvas(width, height);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+
+    // HEIC → immer als JPEG ausgeben
+    const isHEIC = file.type === 'image/heic' ||
+        file.type === 'image/heif' ||
+        file.name?.toLowerCase().endsWith('.heic') ||
+        file.name?.toLowerCase().endsWith('.heif');
+
+    const outputType = isHEIC ? 'image/jpeg' : file.type;
+    return await canvas.convertToBlob({ type: outputType, quality });
 }
 
 async function SendMessage() {
@@ -369,6 +403,8 @@ async function LeaveActiveRoom(){
 
     await db.room.where('id').equals(room_id).delete();
 
+    await db.file.where('room_id').equals(room_id).delete();
+
     leaveRoom(room_id);
 
     room_id = "";
@@ -423,13 +459,28 @@ function EditActiveRoom(){
 }
 
 
-async function showImageModal(fileId) {
+async function getOrRequestFile(fileId, callback) {
     const file = await db.file.get(fileId);
-    if (!file) return;
 
-    const url = await decryptFile(file.blob, "image/jpg", room_key);
+    if (file) {
+        callback(file);
+        return;
+    }
 
-    console.log("Image URL:", url);
+    // Einmalig lauschen
+    const handler = async (e) => {
+        if (e.detail.fileId !== fileId) return;
+        window.removeEventListener('file_ready', handler);
+        const file = await db.file.get(fileId);
+        callback(file);
+    };
+
+    window.addEventListener('file_ready', handler);
+    ws.transferRequest({ id: fileId });
+}
+
+async function showImageModal(file) {
+    const url = await decryptFile(file.blob, file.mime_type, room_key);
 
     const img = document.querySelector('#ct_image img');
 

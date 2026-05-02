@@ -5451,8 +5451,8 @@ textarea,
 }
 
 .login-form {
+  margin-top: 100px !important;
   max-width: 500px;
-  margin: auto;
   text-align: center;
 }
 
