@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type AdapterInternal[T ObjectInternal] struct {
@@ -39,7 +37,7 @@ func NewAdapterInternal[T ObjectInternal](db Database[T]) *AdapterInternal[T] {
 	}
 }
 
-func (aI *AdapterInternal[T]) Delete(ID string) error {
+func (aI *AdapterInternal[T]) Delete(ID []byte) error {
 	aI.mutex.Lock()
 	defer aI.mutex.Unlock()
 
@@ -53,14 +51,14 @@ func (aI *AdapterInternal[T]) Add(obj T) error {
 	return aI.add(obj)
 }
 
-func (aI *AdapterInternal[T]) Get(ID string) (T, error) {
+func (aI *AdapterInternal[T]) Get(ID []byte) (T, error) {
 	aI.mutex.RLock()
 	defer aI.mutex.RUnlock()
 
 	return aI.get(ID)
 }
 
-func (aI *AdapterInternal[T]) Update(ID string, fn func(obj T) error) error {
+func (aI *AdapterInternal[T]) Update(ID []byte, fn func(obj T) error) error {
 	aI.mutex.Lock()
 	defer aI.mutex.Unlock()
 
@@ -81,14 +79,8 @@ func (aI *AdapterInternal[T]) Update(ID string, fn func(obj T) error) error {
 	return aI.add(obj)
 }
 
-func (aI *AdapterInternal[T]) get(ID string) (T, error) {
-	parsedUUID, err := uuid.Parse(ID)
-	if err != nil {
-		var obj T
-		return obj, fmt.Errorf("not possible to parse uuid: %w", err)
-	}
-
-	obj, err := aI.db.GetObjectByID(append(aI.prefix, parsedUUID[:]...))
+func (aI *AdapterInternal[T]) get(ID []byte) (T, error) {
+	obj, err := aI.db.GetObjectByID(append(aI.prefix, ID[:]...))
 	if err != nil {
 		return obj, fmt.Errorf("not possible get object from database: %w", err)
 	}
@@ -97,7 +89,7 @@ func (aI *AdapterInternal[T]) get(ID string) (T, error) {
 }
 
 func (aI *AdapterInternal[T]) add(obj T) error {
-	err := aI.db.AddObject(append(aI.prefix, obj.GetIDByte()...), obj)
+	err := aI.db.AddObject(append(aI.prefix, obj.GetID()...), obj)
 	if err != nil {
 		return fmt.Errorf("not possible store object to database: %w", err)
 	}
@@ -106,7 +98,7 @@ func (aI *AdapterInternal[T]) add(obj T) error {
 }
 
 func (aI *AdapterInternal[T]) AddWithTTL(obj T, ttl int64) error {
-	err := aI.db.AddObjectWithTTL(append(aI.prefix, obj.GetIDByte()...), obj, time.Duration(ttl)*time.Second)
+	err := aI.db.AddObjectWithTTL(append(aI.prefix, obj.GetID()...), obj, time.Duration(ttl)*time.Second)
 	if err != nil {
 		return fmt.Errorf("not possible store object to database: %w", err)
 	}
@@ -114,12 +106,8 @@ func (aI *AdapterInternal[T]) AddWithTTL(obj T, ttl int64) error {
 	return nil
 }
 
-func (aI *AdapterInternal[T]) delete(ID string) error {
-	parsedUUID, err := uuid.Parse(ID)
-	if err != nil {
-		return fmt.Errorf("not possible to parse uuid: %v", err)
-	}
-	err = aI.db.DeleteObjectByID(append(aI.prefix, parsedUUID[:]...))
+func (aI *AdapterInternal[T]) delete(ID []byte) error {
+	err := aI.db.DeleteObjectByID(append(aI.prefix, ID[:]...))
 	if err != nil {
 		return fmt.Errorf("not possible to delete object from database: %w", err)
 	}

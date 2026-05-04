@@ -5,6 +5,8 @@ import (
 	"chatbit/internal/adapter/pubsub"
 	"chatbit/internal/controller/store"
 	"chatbit/internal/domain"
+
+	"github.com/google/uuid"
 )
 
 type Application struct {
@@ -21,7 +23,7 @@ type DB struct {
 }
 
 type PS struct {
-	Message *pubsub.Adapter[domain.Message]
+	Message *pubsub.Adapter[uuid.UUID, domain.Message]
 }
 
 func NewApplication() *Application {
@@ -37,7 +39,7 @@ func NewApplication() *Application {
 			Peer:    store.NewAdapterInternal[domain.Peer](database.NewAdapter[domain.Peer](db)),
 		},
 		PS: PS{
-			Message: pubsub.NewAdapter[domain.Message](),
+			Message: pubsub.NewAdapter[uuid.UUID, domain.Message](),
 		},
 	}
 }

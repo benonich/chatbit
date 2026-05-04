@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type Database[T any] interface {
 	DeleteObjectByID(ID []byte) error
@@ -20,28 +24,25 @@ type DatabaseTs[T any] interface {
 }
 
 type DBInternal[T ObjectInternal] interface {
-	Delete(ID string) error
+	Delete(ID []byte) error
 	Add(obj T) error
 	AddWithTTL(obj T, ttl int64) error
-	Get(ID string) (T, error)
-	Update(ID string, fn func(obj T) error) error
+	Get(ID []byte) (T, error)
+	Update(ID []byte, fn func(obj T) error) error
 }
 
 type DBMessageInternal[T ObjectMessageInternal] interface {
 	DBInternal[T]
-	GetAllSinceTimeStamp(roomID string, timestamp uint64) ([]T, error)
-	DeleteAll(roomID string) error
+	GetAllSinceTimeStamp(roomID uuid.UUID, timestamp uint64) ([]T, error)
+	DeleteAll(roomID uuid.UUID) error
 }
 
 type ObjectInternal interface {
-	GetID() string
-	GetIDByte() []byte
+	GetID() []byte
 }
 
 type ObjectMessageInternal interface {
-	GetID() string
-	GetIDByte() []byte
-	GetRoomID() string
-	GetRoomIDByte() []byte
+	GetID() []byte
+	GetRoomID() []byte
 	GetTimestamp() uint64
 }

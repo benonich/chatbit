@@ -29,8 +29,8 @@ type Transfer struct {
 }
 
 type TransferACK struct {
-	ID    string `json:"id"`
-	Chunk int64  `json:"chunk"`
+	ID    uuid.UUID `json:"id"`
+	Chunk int64     `json:"chunk"`
 }
 
 type TransferNACK struct {
@@ -39,11 +39,6 @@ type TransferNACK struct {
 	Reason string `json:"reason"`
 }
 
-func (m File) GetID() string {
-	return m.ID
-}
-
-func (m File) GetIDByte() []byte {
-	parsedUUID, _ := uuid.Parse(m.ID)
-	return parsedUUID[:]
+func (m File) GetID() []byte {
+	return m.ID[:]
 }

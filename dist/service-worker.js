@@ -21,7 +21,7 @@ var ASSETS_TO_CACHE = [
   'assets/css/inc/splide/splide.min.css',
   'assets/js/lib/html5-qrcode-2.3.8.min.js',
   'assets/js/lib/bootstrap.min.js',
-  'assets/js/lib/dexie.js',
+  'assets/js/lib/dexie.min.js',
   'assets/js/lib/jquery-3.7.0.min.js',
   'assets/js/lib/jquery-qrcode.min.js',
   'assets/js/base.js',

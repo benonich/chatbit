@@ -8,6 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
+type Identifier interface {
+	~string | uuid.UUID
+}
+
 // bufferSize defines the default size of the buffer for message subscribers.
 // maxSubscribers specifies the maximum number of subscribers allowed.
 const (
@@ -30,19 +34,19 @@ var (
 )
 
 // Adapter represents an in-memory pub-sub for managing subscribers and broadcasting messages concurrently.
-type Adapter[T any] struct {
+type Adapter[U Identifier, T any] struct {
 	mu             sync.RWMutex
-	subs           map[string]chan T
+	subs           map[U]chan T
 	BufferSize     int
 	MaxSubscribers int
 	closed         bool
 }
 
 // NewAdapter initializes and returns a new instance of Adapter with default configurations and the empty subscriber map.
-func NewAdapter[T any]() *Adapter[T] {
-	ps := &Adapter[T]{}
+func NewAdapter[U Identifier, T any]() *Adapter[U, T] {
+	ps := &Adapter[U, T]{}
 
-	ps.subs = make(map[string]chan T)
+	ps.subs = make(map[U]chan T)
 
 	ps.MaxSubscribers = maxSubscribers
 
@@ -53,7 +57,7 @@ func NewAdapter[T any]() *Adapter[T] {
 
 // Publish sends the provided object to all active subscribers, skipping over any full channels without blocking.
 // Returns an error if the adapter is closed or if any subscribers drop the message.
-func (ps *Adapter[T]) Publish(obj T) error {
+func (ps *Adapter[U, T]) Publish(obj T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -81,7 +85,7 @@ func (ps *Adapter[T]) Publish(obj T) error {
 
 // PublishExclude sends the provided object to all active subscribers exclude the added subscriber ID, skipping over any full channels without blocking.
 // Returns an error if the adapter is closed or if any subscribers drop the message.
-func (ps *Adapter[T]) PublishExclude(subID string, obj T) error {
+func (ps *Adapter[U, T]) PublishExclude(subID U, obj T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -113,26 +117,36 @@ func (ps *Adapter[T]) PublishExclude(subID string, obj T) error {
 }
 
 // Subscribe registers an update callback to receive published messages and returns a unique subscription ID or an error.
-func (ps *Adapter[T]) Subscribe(update func(obj T)) (string, error) {
-	subID := uuid.New().String()
+func (ps *Adapter[U, T]) Subscribe(update func(obj T)) (U, error) {
+	id := uuid.New()
+
+	var subID U
+	switch any(subID).(type) {
+	case string:
+		subID = any(id.String()).(U)
+	case uuid.UUID:
+		subID = any(id).(U)
+	}
 
 	return ps.SubscribeWithID(subID, update)
 }
 
 // SubscribeWithID registers a new subscriber with a specific ID and handler function and returns the subscriber ID or an error.
 // It locks the Adapter instance, checks if it has reached its maximum subscribers, and spawns a goroutine for the handler.
-func (ps *Adapter[T]) SubscribeWithID(subID string, handler func(obj T)) (string, error) {
+func (ps *Adapter[U, T]) SubscribeWithID(subID U, handler func(obj T)) (U, error) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+
+	var output U
 
 	ch := make(chan T, ps.BufferSize)
 
 	if ps.closed {
-		return "", fmt.Errorf("not possible to subscribe from a closed adapter: %w", ErrAlreadyClosed)
+		return output, fmt.Errorf("not possible to subscribe from a closed adapter: %w", ErrAlreadyClosed)
 	}
 
 	if len(ps.subs) >= ps.MaxSubscribers {
-		return "", fmt.Errorf("not possible to subscribe max number of subscriber reached: %w", ErrMaxSub)
+		return output, fmt.Errorf("not possible to subscribe max number of subscriber reached: %w", ErrMaxSub)
 	}
 
 	ps.subs[subID] = ch
@@ -144,7 +158,7 @@ func (ps *Adapter[T]) SubscribeWithID(subID string, handler func(obj T)) (string
 
 // PublishTo sends an object to a specific subscriber channel using the subscriber's unique ID.
 // Returns an error if the adapter is closed or the operation fails.
-func (ps *Adapter[T]) PublishTo(subID string, obj T) error {
+func (ps *Adapter[U, T]) PublishTo(subID U, obj T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -168,7 +182,7 @@ func (ps *Adapter[T]) PublishTo(subID string, obj T) error {
 
 // PublishTo sends an object to a specific subscriber channel using the subscriber's unique ID.
 // Returns an error if the adapter is closed or the operation fails.
-func (ps *Adapter[T]) PublishToExclude(subID string, obj T) error {
+func (ps *Adapter[U, T]) PublishToExclude(subID U, obj T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -191,7 +205,7 @@ func (ps *Adapter[T]) PublishToExclude(subID string, obj T) error {
 }
 
 // HasSubscriber checks if a subscriber with the given ID exists in the adapter, returning a boolean and an error.
-func (ps *Adapter[T]) HasSubscriber(subID string) (bool, error) {
+func (ps *Adapter[U, T]) HasSubscriber(subID U) (bool, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -205,7 +219,7 @@ func (ps *Adapter[T]) HasSubscriber(subID string) (bool, error) {
 }
 
 // AddSubscriber add a new subscriber to the adapter
-func (ps *Adapter[T]) AddSubscriber(subID string, sub chan T) error {
+func (ps *Adapter[U, T]) AddSubscriber(subID U, sub chan T) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -224,7 +238,7 @@ func (ps *Adapter[T]) AddSubscriber(subID string, sub chan T) error {
 }
 
 // GetSubscriber checks if a subscriber with the given ID exists in the adapter, returning a boolean and an error.
-func (ps *Adapter[T]) GetSubscriber(subID string) (chan T, error) {
+func (ps *Adapter[U, T]) GetSubscriber(subID U) (chan T, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -241,7 +255,7 @@ func (ps *Adapter[T]) GetSubscriber(subID string) (chan T, error) {
 }
 
 // Subscribers retrieve a list of all active subscriber IDs. Returns an error if the adapter is closed.
-func (ps *Adapter[T]) Subscribers() ([]string, error) {
+func (ps *Adapter[U, T]) Subscribers() ([]U, error) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -249,7 +263,7 @@ func (ps *Adapter[T]) Subscribers() ([]string, error) {
 		return nil, fmt.Errorf("not possible to get subscriber from a closed adapter: %w", ErrAlreadyClosed)
 	}
 
-	subs := make([]string, 0, len(ps.subs))
+	subs := make([]U, 0, len(ps.subs))
 	for k := range ps.subs {
 		subs = append(subs, k)
 	}
@@ -258,7 +272,7 @@ func (ps *Adapter[T]) Subscribers() ([]string, error) {
 }
 
 // Unsubscribe removes the subscriber identified by the given subID, closing its channel and preventing further updates.
-func (ps *Adapter[T]) Unsubscribe(subID string) error {
+func (ps *Adapter[U, T]) Unsubscribe(subID U) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -276,7 +290,7 @@ func (ps *Adapter[T]) Unsubscribe(subID string) error {
 }
 
 // UnsubscribeNoClose removes the subscriber identified by the given subID, don't closing its channel
-func (ps *Adapter[T]) UnsubscribeNoClose(subID string) error {
+func (ps *Adapter[U, T]) UnsubscribeNoClose(subID U) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -292,7 +306,7 @@ func (ps *Adapter[T]) UnsubscribeNoClose(subID string) error {
 }
 
 // Close safely closes the Adapter, releasing all resources and closing all active subscriber channels.
-func (ps *Adapter[T]) Close() error {
+func (ps *Adapter[U, T]) Close() error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -311,7 +325,7 @@ func (ps *Adapter[T]) Close() error {
 	return nil
 }
 
-func (ps *Adapter[T]) Closed() bool {
+func (ps *Adapter[U, T]) Closed() bool {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -319,7 +333,7 @@ func (ps *Adapter[T]) Closed() bool {
 }
 
 // Open initializes the adapter by creating a new subscribers map and setting the adapter state to open (not closed).
-func (ps *Adapter[T]) Open() error {
+func (ps *Adapter[U, T]) Open() error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
@@ -333,7 +347,7 @@ func (ps *Adapter[T]) Open() error {
 }
 
 // runSubscriber processes messages received on the provided channel and invokes the handler function for each message.
-func (ps *Adapter[T]) runSubscriber(ch <-chan T, handler func(obj T)) {
+func (ps *Adapter[U, T]) runSubscriber(ch <-chan T, handler func(obj T)) {
 	for obj := range ch {
 		// handle synchronously; backpressure via channel buffer
 		handler(obj)

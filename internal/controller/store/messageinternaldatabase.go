@@ -18,13 +18,8 @@ func NewMessageAdapterInternal[T ObjectMessageInternal](db DatabaseTs[T]) *Messa
 	}
 }
 
-func (aI *MessageAdapterInternal[T]) GetAllSinceTimeStamp(roomID string, timestamp uint64) ([]T, error) {
-	parsedUUID, err := uuid.Parse(roomID)
-	if err != nil {
-		return nil, fmt.Errorf("not possible to parse roomID: %w", err)
-	}
-
-	prefix := append(convertUint16ToByte(PrefixRoom), parsedUUID[:]...)
+func (aI *MessageAdapterInternal[T]) GetAllSinceTimeStamp(roomID uuid.UUID, timestamp uint64) ([]T, error) {
+	prefix := append(convertUint16ToByte(PrefixRoom), roomID[:]...)
 
 	objArr, err := aI.db.GetObjectsByPrefixAndSinceTs(prefix, timestamp)
 	if err != nil {
@@ -33,6 +28,6 @@ func (aI *MessageAdapterInternal[T]) GetAllSinceTimeStamp(roomID string, timesta
 
 	return objArr, nil
 }
-func (aI *MessageAdapterInternal[T]) DeleteAll(roomID string) error {
+func (aI *MessageAdapterInternal[T]) DeleteAll(roomID uuid.UUID) error {
 	return nil
 }

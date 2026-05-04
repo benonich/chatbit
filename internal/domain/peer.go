@@ -7,14 +7,10 @@ import (
 )
 
 type Peer struct {
-	ID       string
+	ID       uuid.UUID
 	LastSeen time.Time
 }
 
-func (p Peer) GetID() string {
-	return p.ID
-}
-func (p Peer) GetIDByte() []byte {
-	parsedUUID, _ := uuid.Parse(p.ID)
-	return parsedUUID[:]
+func (p Peer) GetID() []byte {
+	return p.ID[:]
 }

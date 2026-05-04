@@ -11,18 +11,18 @@ import (
 // BufferSize specifies the buffer size for each topic's subscribers.
 // MaxSubscribers limits the total number of subscribers across all topics.
 // The `closed` field tracks if the AdapterTopic is operational or has been closed.
-type AdapterTopic[T any] struct {
+type AdapterTopic[U Identifier, T any] struct {
 	mu             sync.RWMutex
-	subs           map[string]*Adapter[T]
+	subs           map[U]*Adapter[U, T]
 	BufferSize     int
 	MaxSubscribers int
 	closed         bool
 }
 
 // NewAdapterTopic creates and initializes a new instance of AdapterTopic with default buffer size and maximum subscribers.
-func NewAdapterTopic[T any]() *AdapterTopic[T] {
-	at := &AdapterTopic[T]{}
-	at.subs = make(map[string]*Adapter[T])
+func NewAdapterTopic[U Identifier, T any]() *AdapterTopic[U, T] {
+	at := &AdapterTopic[U, T]{}
+	at.subs = make(map[U]*Adapter[U, T])
 	at.BufferSize = bufferSize
 	at.MaxSubscribers = maxSubscribers
 
@@ -30,7 +30,7 @@ func NewAdapterTopic[T any]() *AdapterTopic[T] {
 }
 
 // Publish sends the given object to all subscribers of the specified topic, or does nothing if there are no subscribers.
-func (at *AdapterTopic[T]) Publish(topic string, obj T) error {
+func (at *AdapterTopic[U, T]) Publish(topic U, obj T) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -48,7 +48,7 @@ func (at *AdapterTopic[T]) Publish(topic string, obj T) error {
 }
 
 // PublishExclude
-func (at *AdapterTopic[T]) PublishExclude(topic, subID string, obj T) error {
+func (at *AdapterTopic[U, T]) PublishExclude(topic, subID U, obj T) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -68,7 +68,7 @@ func (at *AdapterTopic[T]) PublishExclude(topic, subID string, obj T) error {
 // PublishTo sends an object to a specific subscriber of a topic using the subscriber's unique ID.
 // Returns an error if the topic or subscriber ID is not found.
 // No operation is performed if the topic has no subscribers.
-func (at *AdapterTopic[T]) PublishTo(topic, subID string, obj T) error {
+func (at *AdapterTopic[U, T]) PublishTo(topic, subID U, obj T) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -82,26 +82,28 @@ func (at *AdapterTopic[T]) PublishTo(topic, subID string, obj T) error {
 }
 
 // SubscribeWithID registers a callback to the specified topic, returning a unique subscription ID or an error if the operation fails.
-func (at *AdapterTopic[T]) SubscribeWithID(subID, topic string, update func(obj T)) (string, error) {
+func (at *AdapterTopic[U, T]) SubscribeWithID(subID, topic U, update func(obj T)) (U, error) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
+	var output U
+
 	if at.closed {
-		return "", ErrAlreadyClosed
+		return output, ErrAlreadyClosed
 	}
 
 	subsCount := 0
 	for _, sub := range at.subs {
 		subsT, err := sub.Subscribers()
 		if err != nil {
-			return "", err
+			return output, err
 		}
 
 		subsCount += len(subsT)
 	}
 
 	if subsCount >= at.MaxSubscribers {
-		return "", ErrMaxSub
+		return output, ErrMaxSub
 	}
 
 	subs, ok := at.subs[topic]
@@ -115,26 +117,28 @@ func (at *AdapterTopic[T]) SubscribeWithID(subID, topic string, update func(obj 
 }
 
 // Subscribe registers a callback to the specified topic, returning a unique subscription ID or an error if the operation fails.
-func (at *AdapterTopic[T]) Subscribe(topic string, update func(obj T)) (string, error) {
+func (at *AdapterTopic[U, T]) Subscribe(topic U, update func(obj T)) (U, error) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
+	var output U
+
 	if at.closed {
-		return "", ErrAlreadyClosed
+		return output, ErrAlreadyClosed
 	}
 
 	subsCount := 0
 	for _, sub := range at.subs {
 		subsT, err := sub.Subscribers()
 		if err != nil {
-			return "", err
+			return output, err
 		}
 
 		subsCount += len(subsT)
 	}
 
 	if subsCount >= at.MaxSubscribers {
-		return "", ErrMaxSub
+		return output, ErrMaxSub
 	}
 
 	subs, ok := at.subs[topic]
@@ -148,7 +152,7 @@ func (at *AdapterTopic[T]) Subscribe(topic string, update func(obj T)) (string, 
 }
 
 // AddSubscriberToTopic registers an existing subscriber to a new topic
-func (at *AdapterTopic[T]) AddSubscriberToTopic(topic, subID string) error {
+func (at *AdapterTopic[U, T]) AddSubscriberToTopic(topic, subID U) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -176,7 +180,7 @@ func (at *AdapterTopic[T]) AddSubscriberToTopic(topic, subID string) error {
 	return nil
 }
 
-func (at *AdapterTopic[T]) getSubscriber(subID string) (chan T, error) {
+func (at *AdapterTopic[U, T]) getSubscriber(subID U) (chan T, error) {
 	for _, sub := range at.subs {
 		subsT, err := sub.GetSubscriber(subID)
 		if err != nil {
@@ -190,7 +194,7 @@ func (at *AdapterTopic[T]) getSubscriber(subID string) (chan T, error) {
 }
 
 // UnsubscribeFromTopic removes a subscriber from a topic using its ID, cleans up if no subscribers remain, and handles errors.
-func (at *AdapterTopic[T]) UnsubscribeFromTopic(topic, subID string) error {
+func (at *AdapterTopic[U, T]) UnsubscribeFromTopic(topic, subID U) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -235,7 +239,7 @@ func (at *AdapterTopic[T]) UnsubscribeFromTopic(topic, subID string) error {
 }
 
 // Unsubscribe removes a subscriber from a topic using its ID, cleans up if no subscribers remain, and handles errors.
-func (at *AdapterTopic[T]) Unsubscribe(subID string) error {
+func (at *AdapterTopic[U, T]) Unsubscribe(subID U) error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -273,7 +277,7 @@ func (at *AdapterTopic[T]) Unsubscribe(subID string) error {
 }
 
 // Close releases all resources by closing all topic adapters and marking the AdapterTopic as closed. Returns an error if already closed.
-func (at *AdapterTopic[T]) Close() error {
+func (at *AdapterTopic[U, T]) Close() error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -293,7 +297,7 @@ func (at *AdapterTopic[T]) Close() error {
 }
 
 // Open reinitializes the AdapterTopic by unlocking it if it is currently closed; returns an error if already open.
-func (at *AdapterTopic[T]) Open() error {
+func (at *AdapterTopic[U, T]) Open() error {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 
@@ -307,8 +311,8 @@ func (at *AdapterTopic[T]) Open() error {
 }
 
 // newTopicAdapter creates a new Adapter instance with buffer size and maximum subscribers inherited from the AdapterTopic.
-func (at *AdapterTopic[T]) newTopicAdapter() *Adapter[T] {
-	a := NewAdapter[T]()
+func (at *AdapterTopic[U, T]) newTopicAdapter() *Adapter[U, T] {
+	a := NewAdapter[U, T]()
 	a.BufferSize = at.BufferSize
 	a.MaxSubscribers = at.MaxSubscribers
 	return a

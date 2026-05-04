@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,13 +18,13 @@ var upgrader = websocket.Upgrader{
 }
 
 type wsHandler struct {
-	psWsMsgAdapter *pubsub.AdapterTopic[WsOutbound]
+	psWsMsgAdapter *pubsub.AdapterTopic[uuid.UUID, WsOutbound]
 	app            *core.Application
 }
 
 func (s *Server) StartWebSocketServer() {
 	servWS := &wsHandler{
-		psWsMsgAdapter: pubsub.NewAdapterTopic[WsOutbound](),
+		psWsMsgAdapter: pubsub.NewAdapterTopic[uuid.UUID, WsOutbound](),
 		app:            s.app,
 	}
 
@@ -44,13 +45,19 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	uuidC, err := uuid.Parse(clientUID)
+	if err != nil {
+		http.Error(w, "client_uid format error", http.StatusBadRequest)
+		return
+	}
+
 	client := &WsClient{
-		UID:            clientUID,
+		UID:            uuidC,
 		conn:           conn,
 		send:           make(chan WsOutbound, 256),
 		psWsMsgAdapter: h.psWsMsgAdapter,
 		app:            h.app,
-		fileTransfer:   make(map[string]*domain.Transfer),
+		fileTransfer:   make(map[uuid.UUID]*domain.Transfer),
 		fileTransferMu: sync.Mutex{},
 	}
 
