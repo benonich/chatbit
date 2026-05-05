@@ -69,4 +69,6 @@ func (h *wsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.psWsMsgAdapter.SubscribeWithID(client.UID, client.UID, func(obj WsOutbound) {
 		client.send <- obj
 	})
+
+	slog.Info("new ws client connected", slog.String("client_uid", client.UID.String()))
 }

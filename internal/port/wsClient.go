@@ -5,14 +5,11 @@ import (
 	"chatbit/internal/adapter/pubsub"
 	"chatbit/internal/core"
 	"chatbit/internal/domain"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -40,7 +37,6 @@ var (
 	newline = []byte{'\n'}
 	space   = []byte{' '}
 	FileTTL = int64(60 * 60 * 24 * 7)
-	FileDir = "/Users/benoni/code/benoni/chatbit/files"
 )
 
 type WsOutbound struct {
@@ -48,9 +44,29 @@ type WsOutbound struct {
 	Data    []byte
 }
 
+func NewWsOutboundMessage(msgType domain.WsMessageType, msg any) WsOutbound {
+	msgB, err := json.Marshal(msg)
+	if err != nil {
+		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+	}
+
+	wsMsg := domain.WsMessage{
+		Type: string(msgType),
+		Data: msgB,
+	}
+
+	wsData, err := json.Marshal(wsMsg)
+	if err != nil {
+		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+	}
+
+	return WsOutbound{MsgType: websocket.TextMessage, Data: wsData}
+}
+
 type WsClient struct {
 	// The websocket connection.
-	conn *websocket.Conn
+	conn   *websocket.Conn
+	ticker *time.Ticker
 
 	// Buffered channel of outbound messages.
 	send           chan WsOutbound
@@ -64,8 +80,8 @@ type WsClient struct {
 }
 
 func init() {
-	FileDir = os.Getenv("IMAGE_TMP_DIR")
-	slog.Info("FileDir", slog.String("Dir", FileDir))
+	domain.FileDir = os.Getenv("IMAGE_TMP_DIR")
+	slog.Info("FileDir", slog.String("Dir", domain.FileDir))
 }
 
 // readPump pumps messages from the websocket connection to the hub.
@@ -75,7 +91,8 @@ func init() {
 // reads from this goroutine.
 func (c *WsClient) readPump() {
 	defer func() {
-		slog.Info("client disconnected", slog.String("UID", c.UID.String()))
+		slog.Info("client disconnected readPump", slog.String("UID", c.UID.String()))
+		c.ticker.Stop()
 		c.conn.Close()
 		c.psWsMsgAdapter.Unsubscribe(c.UID)
 	}()
@@ -92,18 +109,14 @@ func (c *WsClient) readPump() {
 
 	c.conn.SetReadLimit(maxMessageSize)
 
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-
 	c.conn.SetPongHandler(func(string) error {
-		err := c.app.DB.Peer.Add(domain.Peer{
-			ID:       c.UID,
-			LastSeen: time.Now(),
-		})
+		slog.Debug("receive pong", slog.String("UID:", c.UID.String()))
+
+		err := c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
-			slog.Error("not possible update peer last connection time", slog.String("error", err.Error()))
+			slog.Error("error during SetReadDeadline", slog.String("error", err.Error()))
 		}
 
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		return nil
 	})
 
@@ -113,6 +126,9 @@ func (c *WsClient) readPump() {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("error: %v", err)
 			}
+
+			slog.Info("client disconnected", slog.String("UID", c.UID.String()), slog.String("error", err.Error()))
+
 			break
 		}
 
@@ -132,11 +148,8 @@ func (c *WsClient) readPump() {
 
 		switch domain.WsMessageType(wsMsg.Type) {
 		case domain.WsTypeMessage:
-			msg := domain.Message{}
-
-			err = json.Unmarshal(wsMsg.Data, &msg)
-			if err != nil {
-				slog.Error("not possible to unmarshal ws message Message", slog.String("error", err.Error()))
+			msg, ok := unmarshalWs[domain.Message](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
@@ -186,15 +199,12 @@ func (c *WsClient) readPump() {
 				}
 			}
 		case domain.WsTypeLeaveRoom:
-			msg := domain.LeaveRooms{}
-
-			err = json.Unmarshal(wsMsg.Data, &msg)
-			if err != nil {
-				slog.Error("not possible to unmarshal ws message LeaveRooms", slog.String("error", err.Error()))
+			leave, ok := unmarshalWs[domain.LeaveRooms](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
-			for _, room := range msg.Rooms {
+			for _, room := range leave.Rooms {
 				slog.Info("peer will leave room", slog.String("room", room.String()), slog.String("peer", c.UID.String()))
 				err = c.psWsMsgAdapter.UnsubscribeFromTopic(room, c.UID)
 				if err != nil {
@@ -222,18 +232,15 @@ func (c *WsClient) readPump() {
 			}
 
 		case domain.WsTypeJoinRoom:
-			msg := domain.JoinRooms{}
-
-			err = json.Unmarshal(wsMsg.Data, &msg)
-			if err != nil {
-				slog.Error("not possible to unmarshal ws message JoinRooms", slog.String("error", err.Error()))
+			join, ok := unmarshalWs[domain.JoinRooms](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
 			var allMs []domain.Message
 			var msgSend []byte
 
-			for _, room := range msg.Rooms {
+			for _, room := range join.Rooms {
 				err = c.psWsMsgAdapter.AddSubscriberToTopic(room.ID, c.UID)
 				if err != nil {
 					slog.Error("not possible subscribe to room", slog.String("error", err.Error()))
@@ -262,7 +269,7 @@ func (c *WsClient) readPump() {
 					continue
 				}
 
-				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room.ID, msg.LastConnectionTime)
+				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room.ID, join.LastConnectionTime)
 				if err != nil {
 					slog.Error("not possible to get all messages since", slog.String("error", err.Error()))
 					continue
@@ -292,11 +299,9 @@ func (c *WsClient) readPump() {
 				}
 			}
 		case domain.WsTypeCreateRoom:
-			room := domain.Room{}
-
-			err = json.Unmarshal(wsMsg.Data, &room)
-			if err != nil {
-				slog.Error("not possible to unmarshal room infos", slog.String("error", err.Error()))
+			room, ok := unmarshalWs[domain.Room](wsMsg.Data)
+			if !ok {
+				continue
 			}
 
 			err = c.app.DB.Room.Add(&room)
@@ -306,11 +311,9 @@ func (c *WsClient) readPump() {
 			}
 
 		case domain.WsTypeSubscribePush:
-			push := domain.Push{}
-
-			err = json.Unmarshal(wsMsg.Data, &push)
-			if err != nil {
-				slog.Error("not possible to unmarshal subscribe push infos", slog.String("error", err.Error()))
+			push, ok := unmarshalWs[domain.Push](wsMsg.Data)
+			if !ok {
+				continue
 			}
 
 			push.ID = c.UID
@@ -323,68 +326,60 @@ func (c *WsClient) readPump() {
 				continue
 			}
 		case domain.WsTypeFileTransferStart:
-			var file = &domain.File{}
-
-			err = json.Unmarshal(wsMsg.Data, file)
-			if err != nil {
-				slog.Error("transfer_start parse error", slog.String("error", err.Error()))
+			file, ok := unmarshalWs[domain.File](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
-			c.handleTransferStart(file)
+			c.handleTransferStart(&file)
 
 			err = c.psWsMsgAdapter.PublishExclude(file.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: message})
 			if err != nil {
-				slog.Error("not possible to add pushID", slog.String("error", err.Error()))
+				slog.Error("not possible to handle transfer start", slog.String("error", err.Error()))
 				continue
 			}
 		case domain.WsTypeFileTransferDone:
-			var file = &domain.File{}
-
-			err = json.Unmarshal(wsMsg.Data, file)
-			if err != nil {
-				slog.Error("transfer_start parse error", slog.String("error", err.Error()))
+			file, ok := unmarshalWs[domain.File](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
-			c.handleTransferDone(file)
+			c.handleTransferDone(&file)
 
 			err = c.psWsMsgAdapter.Publish(file.RoomID, WsOutbound{MsgType: websocket.TextMessage, Data: message})
 			if err != nil {
-				slog.Error("not possible to add pushID", slog.String("error", err.Error()))
+				slog.Error("not possible to handle transfer done", slog.String("error", err.Error()))
 				continue
 			}
 
 		case domain.WsTypeFileTransferRequest:
-			var file = &domain.File{}
-
-			err = json.Unmarshal(wsMsg.Data, file)
-			if err != nil {
-				slog.Error("transfer_start parse error", slog.String("error", err.Error()))
+			file, ok := unmarshalWs[domain.File](wsMsg.Data)
+			if !ok {
 				continue
 			}
 
-			c.sendFileTransferStart(file.ID)
+			err = c.sendFileTransferStart(&file)
+			if err != nil {
+				slog.Error("not possible to start transfer", slog.String("error", err.Error()))
+				continue
+			}
 		}
 	}
 }
 
 func (c *WsClient) writePump() {
-	ticker := time.NewTicker(pingPeriod)
+	c.ticker = time.NewTicker(pingPeriod)
 	defer func() {
-		ticker.Stop()
+		slog.Info("client disconnected writePump", slog.String("UID", c.UID.String()))
+		c.ticker.Stop()
 		c.conn.Close()
 	}()
+
+	var err error
 
 	for {
 		select {
 		case message, ok := <-c.send:
-			err := c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err != nil {
-				// There is no deadline set, so the connection is dead
-				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
-				return
-			}
 			if !ok {
 				// The channel is closed
 				slog.Error("channel closed from unsubscribe event", slog.String("UID:", c.UID.String()))
@@ -392,27 +387,56 @@ func (c *WsClient) writePump() {
 				return
 			}
 
-			err = c.conn.WriteMessage(message.MsgType, message.Data)
+			err = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
+				// There is no deadline set, so the connection is dead
+				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
 				return
 			}
 
-			ticker.Reset(pingPeriod)
-		case <-ticker.C:
-			slog.Debug("timeout", slog.String("UID:", c.UID.String()))
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			err = c.conn.WriteMessage(message.MsgType, message.Data)
 			if err != nil {
+				slog.Error("not possible to write message", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+
+				return
+			}
+
+		case <-c.ticker.C:
+			err = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err != nil {
+				// There is no deadline set, so the connection is dead
+				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+				return
+			}
+
+			slog.Debug("send ping", slog.String("UID:", c.UID.String()))
+
+			err = c.conn.WriteMessage(websocket.PingMessage, nil)
+			if err != nil {
+				slog.Error("not possible to write Ping message", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+
 				return
 			}
 		}
 	}
 }
 
+func unmarshalWs[T any](data json.RawMessage) (T, bool) {
+	var v T
+	err := json.Unmarshal(data, &v)
+	if err != nil {
+		slog.Error("not possible to Unmarshal message", slog.String("error", err.Error()))
+		return v, false
+	}
+
+	return v, true
+}
+
 func (c *WsClient) sendPushNotification(peerID uuid.UUID) {
 	pushID, err := c.app.DB.Push.Get(peerID[:])
 	if err != nil {
 		slog.Error("not possible to get pushID", slog.String("error", err.Error()))
+		return
 	}
 
 	sub := &webpush.Subscription{
@@ -444,68 +468,4 @@ func (c *WsClient) sendPushNotification(peerID uuid.UUID) {
 	}
 
 	defer resp.Body.Close()
-}
-
-func (c *WsClient) sendFileTransferStart(fileId uuid.UUID) error {
-	// TODO is needed?
-	hdr, err := c.app.DB.File.Get(fileId[:])
-
-	f, err := os.Open(filepath.Join(FileDir, hdr.ID.String()))
-	if err != nil {
-		slog.Error("cannot create temp file", slog.String("error", err.Error()))
-		return err
-	}
-
-	slog.Info("transfer request started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
-
-	transB, _ := json.Marshal(hdr)
-
-	msg := domain.WsMessage{
-		Type: string(domain.WsTypeFileTransferStart),
-		Data: transB,
-	}
-
-	msgB, _ := json.Marshal(msg)
-
-	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: msgB}
-
-	buf := make([]byte, hdr.ChunkSize)
-	index := 0
-
-	for {
-		n, err := f.Read(buf)
-		if n > 0 {
-			packet := make([]byte, 16+4+len(buf[:n]))
-			copy(packet[0:16], hdr.ID[:])
-			binary.BigEndian.PutUint32(packet[16:20], uint32(index))
-			copy(packet[20:], buf[:n])
-			c.send <- WsOutbound{MsgType: websocket.BinaryMessage, Data: packet}
-			index++
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	msgB, err = json.Marshal(hdr.Message)
-	if err != nil {
-		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
-	}
-
-	wsMsg := domain.WsMessage{
-		Type: string(domain.WsTypeFileTransferDone),
-		Data: msgB,
-	}
-
-	wsMsgB, err := json.Marshal(wsMsg)
-	if err != nil {
-		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
-	}
-
-	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB}
-
-	return nil
 }

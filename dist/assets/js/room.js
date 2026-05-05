@@ -161,7 +161,7 @@ function AddMessageToRoom(id, msg, alias_id, alias, timeStamp, synced, typeI){
     if(alias_id !== db_alias.uid){
         msgHtml += "                <div class=\"title\" alias-id='"+alias_id+"'>"+alias+"</div>\n";
     }
-    console.log("typeI:", typeI)
+
     if(typeI === 1){
         msg = "<button type=\"button\" class=\"btn btn-secondary\" onclick='getOrRequestFile(\""+id+"\", (file) => {showImageModal(file);})'>Image</button>"
     }else{
@@ -476,7 +476,7 @@ async function getOrRequestFile(fileId, callback) {
     };
 
     window.addEventListener('file_ready', handler);
-    ws.transferRequest({ id: fileId });
+    ws.transferRequest({ id: fileId, room_id: room_id });
 }
 
 async function showImageModal(file) {

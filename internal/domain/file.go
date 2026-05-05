@@ -2,9 +2,12 @@ package domain
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/google/uuid"
 )
+
+var FileDir = "/Users/benoni/code/benoni/chatbit/files"
 
 type File struct {
 	Message
@@ -18,14 +21,9 @@ type File struct {
 }
 
 type Transfer struct {
-	Message
-
-	ChunkTotal int64 `json:"chunks_total"`
-	ChunkSize  int64 `json:"chunk_size"`
-	Chunks     int64 `json:"chunks"`
-	File       *os.File
-	FilePath   string
-	Received   int64 // chunks empfangen
+	File
+	OsFile   *os.File
+	Received int64 // chunks empfangen
 }
 
 type TransferACK struct {
@@ -34,11 +32,19 @@ type TransferACK struct {
 }
 
 type TransferNACK struct {
-	ID     string `json:"id"`
-	Chunk  int64  `json:"chunk"`
-	Reason string `json:"reason"`
+	ID     uuid.UUID `json:"id"`
+	Chunk  int64     `json:"chunk"`
+	Reason string    `json:"reason"`
 }
 
 func (m File) GetID() []byte {
 	return m.ID[:]
+}
+
+func (m File) GetFileDir() string {
+	return filepath.Join(FileDir, m.RoomID.String())
+}
+
+func (m File) GetFilePath() string {
+	return filepath.Join(FileDir, m.RoomID.String(), m.ID.String())
 }

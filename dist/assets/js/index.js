@@ -18,8 +18,6 @@ window.onload = async (event) => {
     console.log("init WS")
 
     await PageLoad();
-    
-    await subscribe();
 }
 
 async function PageLoad() {
@@ -37,6 +35,8 @@ async function PageLoad() {
 
     document.getElementById('appContent').innerHTML = contentDiv.innerHTML;
     document.getElementById('appHeader').innerHTML = headerDiv.innerHTML;
+
+    await subscribe();
 
     //if (rtc === undefined && db_alias !== undefined) {
     //    rtc = new RTCPeer(config, db_alias.uid, signalingChannel, rtcMessageHandler);

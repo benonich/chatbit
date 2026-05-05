@@ -2,10 +2,17 @@ package port
 
 import (
 	"chatbit/internal/core"
+	"chatbit/internal/domain"
 	"errors"
+	"io/fs"
 	"log"
+	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -36,6 +43,8 @@ func (s *Server) Start() error {
 
 	s.StartWebSocketServer()
 
+	s.startFileCleanup()
+
 	// Push notification
 	//servMux.HandleFunc("/vapidPublicKey", vapid.VapIDPubKeyFunc)
 	//servMux.HandleFunc("/subscribe", vapid.SubscribeFunc)
@@ -55,4 +64,32 @@ func (s *Server) Start() error {
 	}
 
 	return nil
+}
+
+func (s *Server) startFileCleanup() {
+	ticker := time.NewTicker(1 * time.Hour)
+	go func() {
+		for range ticker.C {
+			slog.Info("file cleanup started")
+
+			err := filepath.WalkDir(domain.FileDir, func(path string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return err
+				}
+				fileID, err := uuid.Parse(d.Name())
+				if err != nil {
+					return nil
+				}
+				_, err = s.app.DB.File.Get(fileID[:])
+				if err != nil {
+					os.Remove(path)
+					os.Remove(filepath.Dir(path))
+				}
+				return nil
+			})
+			if err != nil {
+				slog.Error("file cleanup failed", slog.String("error", err.Error()))
+			}
+		}
+	}()
 }

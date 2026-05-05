@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -16,64 +16,53 @@ import (
 func (c *WsClient) handleTransferStart(hdr *domain.File) {
 	slog.Debug("transfer_start", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
 
-	var fileName string
-	var file *os.File
+	fileHdr := &domain.Transfer{
+		File:     *hdr,
+		Received: 0,
+	}
+
 	var err error
 
 	if hdr.Store {
-		file, err = os.Create(filepath.Join(FileDir, hdr.ID.String()))
+		err = os.MkdirAll(hdr.GetFileDir(), 0o755)
 		if err != nil {
-			slog.Error("cannot create temp file", slog.String("error", err.Error()))
+			slog.Error("cannot create dir", slog.String("error", err.Error()))
 			return
 		}
 
-		if err := file.Truncate(hdr.TotalSize); err != nil {
-			slog.Error("cannot truncate temp file", slog.String("error", err.Error()))
-			file.Close()
-			os.Remove(file.Name())
+		fileHdr.OsFile, err = os.Create(hdr.GetFilePath())
+		if err != nil {
+			slog.Error("cannot create file", slog.String("error", err.Error()))
 			return
 		}
 
-		fileName = file.Name()
+		err = fileHdr.OsFile.Truncate(hdr.TotalSize)
+		if err != nil {
+			slog.Error("cannot truncate file", slog.String("error", err.Error()))
+			fileHdr.OsFile.Close()
+			os.Remove(fileHdr.OsFile.Name())
+			return
+		}
 	}
 
-	c.fileTransferMu.Lock()
-	c.fileTransfer[hdr.ID] = &domain.Transfer{
-		Message: domain.Message{
-			ID:        hdr.ID,
-			Type:      1,
-			RoomID:    hdr.RoomID,
-			Alias:     hdr.Alias,
-			AliasID:   hdr.AliasID,
-			Message:   "",
-			TimeStamp: hdr.TimeStamp,
-			Store:     hdr.Store,
-			TTL:       hdr.TTL,
-		},
-		ChunkTotal: hdr.ChunkTotal,
-		ChunkSize:  hdr.ChunkSize,
-		Chunks:     hdr.Chunks,
-		File:       file,
-		FilePath:   fileName,
-		Received:   0,
+	if hdr.TTL > FileTTL || hdr.TTL == 0 {
+		hdr.TTL = FileTTL
 	}
-	c.fileTransferMu.Unlock()
 
-	err = c.app.DB.File.AddWithTTL(hdr, FileTTL)
+	err = c.app.DB.File.AddWithTTL(hdr, hdr.TTL)
 	if err != nil {
-		slog.Error("not possible to add file to database", slog.String("error", err.Error()))
+		slog.Error("not possible to add file header to database", slog.String("error", err.Error()))
 		return
 	}
 
+	c.fileTransferMu.Lock()
+	c.fileTransfer[hdr.ID] = fileHdr
+	c.fileTransferMu.Unlock()
+
+	c.sendACK(hdr.ID, 0)
+
 	slog.Info("transfer started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
 
-	ackB, _ := json.Marshal(domain.TransferACK{ID: hdr.ID, Chunk: 0})
-	// ACK send next package
-	ack, _ := json.Marshal(domain.WsMessage{
-		Type: string(domain.WsTypeFileTransferACK),
-		Data: ackB,
-	})
-	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: ack}
 }
 
 func (c *WsClient) handleTransferDone(done *domain.File) {
@@ -86,7 +75,7 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 		return
 	}
 
-	t.File.Close()
+	t.OsFile.Close()
 
 	if t.Received != t.ChunkTotal {
 		slog.Warn("transfer incomplete",
@@ -94,7 +83,7 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 			slog.Int64("expected", t.ChunkTotal),
 		)
 
-		err := os.Remove(t.FilePath)
+		err := os.Remove(t.GetFilePath())
 		if err != nil {
 			slog.Error("not possible to remove file", slog.String("error", err.Error()))
 		}
@@ -122,8 +111,7 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
 	}
 
-	err = c.psWsMsgAdapter.Publish(t.Message.RoomID, WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB})
-
+	err = c.psWsMsgAdapter.PublishExclude(t.Message.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB})
 	if err != nil {
 		slog.Error("not possible to update file in database", slog.String("error", err.Error()))
 		return
@@ -131,27 +119,18 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 }
 
 func (c *WsClient) handleChunk(data []byte) {
-	if len(data) < 20 {
-		return
-	}
-	ub := data[:16]
-	id := fmt.Sprintf("%x-%x-%x-%x-%x", ub[0:4], ub[4:6], ub[6:8], ub[8:10], ub[10:16])
-
-	uid, err := uuid.Parse(id)
+	uid, chunkId, payload, err := c.readFileHeader(data)
 	if err != nil {
 		slog.Error("not possible convert uuid from chunk", slog.String("error", err.Error()))
 		return
 	}
 
-	chunkId := int64(binary.BigEndian.Uint32(data[16:20]))
-
-	payload := data[20:]
-
 	c.fileTransferMu.Lock()
 	t, ok := c.fileTransfer[uid]
 	c.fileTransferMu.Unlock()
+
 	if !ok {
-		slog.Warn("chunk for unknown transfer", slog.String("id", id))
+		slog.Warn("chunk for unknown transfer", slog.String("id", uid.String()))
 		return
 	}
 
@@ -164,18 +143,12 @@ func (c *WsClient) handleChunk(data []byte) {
 	if t.Store {
 		// Direkt an den richtigen Offset schreiben – kein Assembly nötig
 		offset := chunkId * t.ChunkSize // chunkSize = 64*1024
-		if _, err := t.File.WriteAt(payload, offset); err != nil {
+		_, err = t.OsFile.WriteAt(payload, offset)
+		if err != nil {
 			slog.Error("chunk write error", slog.String("error", err.Error()))
 
-			nackB, _ := json.Marshal(domain.TransferNACK{ID: id, Chunk: chunkId, Reason: "write_error"})
+			c.sendNACK(uid, chunkId)
 
-			// NACK send package again
-			nack, _ := json.Marshal(domain.WsMessage{
-				Type: string(domain.WsTypeFileTransferNACK),
-				Data: nackB,
-			})
-
-			c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: nack}
 			return
 		}
 	}
@@ -185,15 +158,105 @@ func (c *WsClient) handleChunk(data []byte) {
 	c.fileTransferMu.Unlock()
 
 	if t.Received == t.ChunkTotal {
-		slog.Info("transfer done", slog.String("file", id))
+		slog.Info("transfer done", slog.String("file", uid.String()))
 		return
 	}
 
-	ackB, _ := json.Marshal(domain.TransferACK{ID: uid, Chunk: chunkId + 1})
+	c.sendACK(uid, chunkId+1)
+}
 
-	ack, _ := json.Marshal(domain.WsMessage{
-		Type: string(domain.WsTypeFileTransferACK),
-		Data: ackB,
-	})
-	c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: ack}
+func (c *WsClient) sendFileTransferStart(file *domain.File) error {
+	hdr, err := c.app.DB.File.Get(file.ID[:])
+	if err != nil {
+		slog.Error("not possible to get file header from database", slog.String("error", err.Error()))
+		return err
+	}
+
+	f, err := os.Open(hdr.GetFilePath())
+	if err != nil {
+		slog.Error("cannot create temp file", slog.String("error", err.Error()))
+		return err
+	}
+
+	slog.Info("transfer request started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
+
+	err = c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferStart, hdr))
+	if err != nil {
+		slog.Error("not possible to publish transfer start", slog.String("error", err.Error()))
+	}
+
+	buf := make([]byte, hdr.ChunkSize)
+	var index int64
+
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			packet := c.addFileHeader(hdr.ID, index, buf[:n])
+
+			err = c.psWsMsgAdapter.PublishTo(c.UID, c.UID, WsOutbound{MsgType: websocket.BinaryMessage, Data: packet})
+			if err != nil {
+				slog.Error("not possible to publish transfer start", slog.String("error", err.Error()))
+			}
+
+			index++
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	err = c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferDone, hdr.Message))
+	if err != nil {
+		slog.Error("not possible to publish transfer start", slog.String("error", err.Error()))
+	}
+
+	return nil
+}
+
+func (c *WsClient) addFileHeader(id uuid.UUID, index int64, chunk []byte) []byte {
+	packet := make([]byte, 16+4+len(chunk))
+	copy(packet[0:16], id[:])
+	binary.BigEndian.PutUint32(packet[16:20], uint32(index))
+	copy(packet[20:], chunk)
+	return packet
+}
+
+func (c *WsClient) readFileHeader(data []byte) (uid uuid.UUID, index int64, chunk []byte, err error) {
+	if len(data) < 20 {
+		err = fmt.Errorf("invalid chunk size")
+		return
+	}
+
+	ub := data[:16]
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", ub[0:4], ub[4:6], ub[6:8], ub[8:10], ub[10:16])
+
+	uid, err = uuid.Parse(id)
+	if err != nil {
+		slog.Error("not possible convert uuid from chunk", slog.String("error", err.Error()))
+		err = fmt.Errorf("invalid UUID")
+		return
+	}
+
+	index = int64(binary.BigEndian.Uint32(data[16:20]))
+
+	chunk = data[20:]
+
+	return
+}
+
+func (c *WsClient) sendACK(id uuid.UUID, chunk int64) {
+	err := c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferACK, domain.TransferACK{ID: id, Chunk: chunk}))
+	if err != nil {
+		slog.Error("not possible to publish ACK", slog.String("error", err.Error()))
+	}
+}
+
+func (c *WsClient) sendNACK(id uuid.UUID, chunk int64) {
+	err := c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferNACK, domain.TransferNACK{ID: id, Chunk: chunk}))
+	if err != nil {
+		slog.Error("not possible to publish ACK", slog.String("error", err.Error()))
+	}
 }

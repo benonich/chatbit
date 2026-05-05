@@ -1589,6 +1589,11 @@ i.bi {
   width: 200px !important;
 }
 
+.img-fluid {
+  max-height: 515px;
+  object-fit: contain;
+}
+
 .imaged.img-fluid {
   width: 100%;
 }
@@ -3423,7 +3428,7 @@ a.badge-dark {
 .dialogbox .modal-dialog .modal-content {
   max-width: 500px;
   margin: auto;
-  max-height: 560px;
+  max-height: 575px;
   overflow: auto;
   border: 0;
   border-radius: 16px;
@@ -5452,7 +5457,6 @@ textarea,
 
 .login-form {
   margin-top: 100px !important;
-  max-width: 500px;
   text-align: center;
 }
 

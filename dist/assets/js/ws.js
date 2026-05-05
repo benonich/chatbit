@@ -30,6 +30,7 @@ class WebSocketChannel {
         if(this.conn !== null && this.conn.readyState === WebSocket.OPEN){
             return;
         }
+
         return new Promise(async (resolve, reject) => {
             if (window["WebSocket"]) {
 
@@ -42,7 +43,7 @@ class WebSocketChannel {
                     console.log(evt);
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     console.log("Try again to connect to WS");
-                    this.init(db_room);
+                    await this.init(db_room);
                 };
 
                 this.conn.onmessage = (e) => {
@@ -159,6 +160,7 @@ class WebSocketChannel {
     }
 
     async getIncomingTransfer(fileId) {
+        console.log("get incoming transfer", fileId);
         const t = this._incomingTransfers.get(fileId);
         if (!t) throw new Error("unknown transfer");
 
@@ -166,6 +168,7 @@ class WebSocketChannel {
     }
 
     async deleteIncomingTransfer(fileId) {
+        console.log("delete incoming transfer", fileId);
         this._incomingTransfers.delete(fileId);
     }
 
@@ -278,6 +281,8 @@ async function handleIncomingMessage(msg) {
             console.log("received done", msg.data);
 
             const t = await ws.getIncomingTransfer(msg.data.id);
+
+            console.log("transfer", t);
 
             const totalLength = t.chunks.reduce((sum, c) => sum + c.byteLength, 0);
 
