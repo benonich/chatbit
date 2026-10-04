@@ -4,9 +4,9 @@ let room_key;
 let room_ttl;
 let room_store;
 
-async function PageLoadLock() {
 
-    CheckIsUserLoggedIn()
+
+async function PageLoadLock() {
 
     document.getElementById('lock_submit').addEventListener('submit', e => {
         e.preventDefault();
@@ -49,19 +49,19 @@ async function PageLoadLogin() {
 }
 
 async function PageLoadRoom() {
-    // Get room ID
-    room_id = sessionStorage.getItem(SS_room_id);
+    // Remove any stale subscriptions from a previous room visit
+    _unsubscribeRoomEvents();
 
+    room_id = sessionStorage.getItem(SS_room_id);
     console.log("load room ID" + room_id);
 
-    db.room.get({id:room_id}).then(roomObj => {
-         decryptData(roomObj.name, db_key).then(k => {
-             room_name = k;
-             $("#ro_room_name").text(room_name);
-         });
-        room_ttl = roomObj.ttl;
+    db.room.get({id: room_id}).then(roomObj => {
+        decryptData(roomObj.name, db_key).then(k => {
+            room_name = k;
+            $("#ro_room_name").text(room_name);
+        });
+        room_ttl   = roomObj.ttl;
         room_store = roomObj.store;
-
     });
 
     $("#ct_msg_input").on("keydown", async function(e) {
@@ -72,10 +72,9 @@ async function PageLoadRoom() {
     });
 
     await LoadRoomKey();
-
     await GetAllMessages();
 
-    console.log("room loaded")
+    console.log("room loaded");
 
     const el = $("#ct_room")[0];
     el.scrollTop = el.scrollHeight;
@@ -92,6 +91,24 @@ async function PageLoadRoom() {
             $('#ct_edit_room_ttl_row').hide();
         }
     });
+
+    // Subscribe to WebSocket events
+    _onWsMessage = (msg) => {
+        if (msg.roomId !== room_id) return;
+        AddMessageToRoom(msg.id, msg.content, msg.aliasId, msg.alias, msg.date, msg.synced, msg.type);
+    };
+
+    _onWsSynced = ({id}) => {
+        setMessageStatus(id, true);
+    };
+
+    _onWsFileReady = ({fileId}) => {
+        // Handled via getOrRequestFile which subscribes to chat:file_ready directly
+    };
+
+    events.on('chat:message',    _onWsMessage);
+    events.on('chat:synced',     _onWsSynced);
+    events.on('chat:file_ready', _onWsFileReady);
 }
 
 let timeStampNow;
@@ -116,7 +133,7 @@ async function AddRoom(){
         ttl: $("#in_new_room_ttl").val() * $("#in_new_room_ttl_unit").val()
     }).then(r => {
         $("#in_new_room_name").val("");
-        $('#in_add_room').modal('hide');
+        $('#in_new_room').modal('hide');
         $("#in_new_room_push").prop("checked", false);
         $("#in_new_room_ttl").val(0);
         $("#in_new_room_ttl_unit").val(0);
@@ -247,8 +264,6 @@ async function GetAllMessages() {
         let aliasD = await DecryptMsg(msg.alias);
         let aliasIDD = await DecryptMsg(msg.alias_id);
         let timeStamp = new Date(msg.timestamp);
-        let timeStamp_received = new Date(msg.timestamp_received);
-
 
         console.log("msgT:", msg.type)
         AddMessageToRoom(msg.id, msgD, aliasIDD, aliasD, timeStamp, msg.synced, msg.type);
@@ -467,16 +482,15 @@ async function getOrRequestFile(fileId, callback) {
         return;
     }
 
-    // Einmalig lauschen
-    const handler = async (e) => {
-        if (e.detail.fileId !== fileId) return;
-        window.removeEventListener('file_ready', handler);
+    const handler = async ({fileId: id}) => {
+        if (id !== fileId) return;
+        events.off('chat:file_ready', handler);
         const file = await db.file.get(fileId);
         callback(file);
     };
 
-    window.addEventListener('file_ready', handler);
-    ws.transferRequest({ id: fileId, room_id: room_id });
+    events.on('chat:file_ready', handler);
+    ws.transferRequest({id: fileId, room_id: room_id});
 }
 
 async function showImageModal(file) {

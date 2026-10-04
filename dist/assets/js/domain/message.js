@@ -1,0 +1,166 @@
+// domain/Message.js
+// Represents a single chat message — always holds decrypted values
+// Encryption/decryption is handled by the adapter layer, not here
+
+export class Message {
+    static TYPE_TEXT  = 0;
+    static TYPE_IMAGE = 1;
+
+    constructor({ id, roomId, aliasId, alias, content, timestamp, synced, type, ttl, store,
+                  mimeType, totalSize, chunkSize, chunksTotal }) {
+        this.id          = id ?? crypto.randomUUID();
+        this.roomId      = roomId;
+        this.aliasId     = aliasId;
+        this.alias       = alias;
+        this.content     = content;
+        this.timestamp   = timestamp ?? Date.now();
+        this.synced      = synced ?? false;
+        this.type        = type ?? Message.TYPE_TEXT;
+        this.ttl         = ttl ?? 0;
+        this.store       = store ?? false;
+        // File-only fields (undefined for text messages)
+        this.mimeType    = mimeType;
+        this.totalSize   = totalSize;
+        this.chunkSize   = chunkSize;
+        this.chunksTotal = chunksTotal;
+    }
+
+    // -------------------------------------------------------------------------
+    // Factories — JSON → Message
+    // -------------------------------------------------------------------------
+
+    // From a decrypted DB row or decrypted WS payload
+    // The adapter decrypts alias, alias_id and message before calling this
+    static fromJSON(row) {
+        return new Message({
+            // Required fields
+            id:        row.id,
+            roomId:    row.roomId,
+            aliasId:   row.aliasId,
+            alias:     row.alias,
+            content:   row.content,
+            timestamp: row.timestamp,
+            synced:    row.synced,
+            type:      row.type,
+            ttl:       row.ttl,
+            store:     row.store,
+            // Optional file fields — undefined when not present, that is fine
+            mimeType:    row.mimeType,
+            totalSize:   row.totalSize,
+            chunkSize:   row.chunkSize,
+            chunksTotal: row.chunksTotal,
+        });
+    }
+
+    static fromDB(row) {
+        return new Message({
+            // Required fields
+            id:        row.id,
+            roomId:    row.roomId,
+            aliasId:   row.aliasId,
+            alias:     row.alias,
+            content:   row.content,
+            timestamp: row.timestamp,
+            synced:    row.synced,
+            type:      row.type,
+            ttl:       row.ttl,
+            store:     row.store,
+            // Optional file fields — undefined when not present, that is fine
+            mimeType:    row.mimeType,
+            totalSize:   row.totalSize,
+            chunkSize:   row.chunkSize,
+            chunksTotal: row.chunksTotal,
+        });
+    }
+
+    // Create a new outgoing text message
+    static createText({ roomId, aliasId, alias, content, ttl, store }) {
+        return new Message({
+            roomId, aliasId, alias, content,
+            type: Message.TYPE_TEXT,
+            ttl, store,
+        });
+    }
+
+    // Create a new outgoing file/image message
+    static createFile({ roomId, aliasId, alias, mimeType, totalSize, chunkSize, chunksTotal, ttl, store }) {
+        return new Message({
+            roomId, aliasId, alias,
+            content: mimeType,  // for files, content holds the mime type
+            type: Message.TYPE_IMAGE,
+            ttl, store,
+            mimeType, totalSize, chunkSize, chunksTotal,
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Serialization — Message → JSON (adapter encrypts fields before storing/sending)
+    // -------------------------------------------------------------------------
+
+    toJSON() {
+        const json = {
+            id:        this.id,
+            roomId:    this.roomId,
+            aliasId:   this.aliasId,
+            alias:     this.alias,
+            content:   this.content,
+            timestamp: this.timestamp,
+            synced:    this.synced,
+            type:      this.type,
+            ttl:       this.ttl,
+            store:     this.store,
+        };
+
+        // File-only fields — only included when present
+        if (this.mimeType    != null) json.mimeType    = this.mimeType;
+        if (this.totalSize   != null) json.totalSize   = this.totalSize;
+        if (this.chunkSize   != null) json.chunkSize   = this.chunkSize;
+        if (this.chunksTotal != null) json.chunksTotal = this.chunksTotal;
+
+        return json;
+    }
+
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+    isRoom(roomId) { return this.roomId === roomId; }
+
+    isImage()    { return this.type === Message.TYPE_IMAGE; }
+    isText()     { return this.type === Message.TYPE_TEXT; }
+
+    get date()          { return new Date(this.timestamp); }
+    get formattedTime() { return this.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+    get formattedDate() { return this.date.toDateString(); }
+
+
+    // -------------------------------------------------------------------------
+    // Private rendering helpers
+    // -------------------------------------------------------------------------
+
+    _renderBubble(content) {
+        if (this.isImage()) {
+            return `<button type="button" class="btn btn-secondary"
+                        onclick='getOrRequestFile("${this.id}", (file) => { showImageModal(file); })'>
+                        Image
+                    </button>`;
+        }
+
+        const conR = this._escape(content);
+        console.log("ESCAPED CONTENT", conR);
+        return conR;
+    }
+
+    _renderStatus() {
+        return this.synced
+            ? '<ion-icon name="checkmark-done-outline"></ion-icon>'
+            : '<ion-icon name="checkmark-outline"></ion-icon>';
+    }
+
+    _escape(str) {
+        const el = document.createElement('div');
+
+        el.textContent = str ?? '';
+
+        return el.innerHTML;
+    }
+}

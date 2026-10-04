@@ -11,6 +11,13 @@ import (
 
 const MaxMessageTTL = 60 * 60 * 24 * 30
 
+// Injected at build time via -ldflags (see Taskfile.yml)
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -33,7 +40,11 @@ func main() {
 
 	vapid.GenerateVapID()
 
-	serv := port.NewServer(app)
+	serv := port.NewServer(app, port.BuildInfo{
+		Version:   version,
+		Commit:    commit,
+		BuildDate: buildDate,
+	})
 	serv.Start()
 
 }

@@ -3,10 +3,7 @@ let db_key;
 let db_alias;
 let db_rooms;
 
-const queryString = window.location.search;
-const urlParams = new URLSearchParams(queryString);
 const mainPath = "/";
-const SS_key = "chatbit_key";
 const SS_room_id = "chatbit_room_id";
 
 async function InitDatabase(){
@@ -51,17 +48,10 @@ async function InitDatabase(){
     db_alias = await GetAlias();
 
     console.log("load pwd from session")
-    db_key = base64ToKey(sessionStorage.getItem(SS_key));
+    db_key = null; // set by Login() or Unlock() — never stored outside memory
 }
 
-async function CleanActiveRoom(){
-    await db.chat.where('room_id').equals(room_id).delete();
-    await db.file.where('room_id').equals(room_id).delete();
 
-    $("#ct_room").html("");
-
-    timeStampNow = undefined;
-}
 
 
 function GetAllRooms(){
@@ -93,7 +83,6 @@ function GetAllRooms(){
 
         OpenRoom(link.dataset.id);
     });
-
 }
 
 function handleAutoScroll() {
@@ -147,42 +136,28 @@ function Logout(){
 
 // Login
 function Login(){
-    SetAlias($("#lo_alias").val(), $("#lo_password").val()).then(r => {
-        OpenDatabase($("#lo_password").val()).then(r => {
-            // only if user want to store pwd
-            keyToBase64(db_key).then(key => {
-                sessionStorage.setItem(SS_key, key);
-
-                SetActualPage(pageMain);
-            });
+    SetAlias($("#lo_alias").val(), $("#lo_password").val()).then(() => {
+        OpenDatabase($("#lo_password").val()).then(() => {
+            SetActualPage(pageMain);
         });
     });
 }
 
 function Lock(){
-
-    sessionStorage.clear();
-
+    db_key = null; // wipe key from memory — refresh or lock screen requires password again
+    sessionStorage.removeItem(SS_room_id);
     SetActualPage(pageLock);
 }
 
-
 function Unlock(){
-    OpenDatabase($("#ls_password").val()).then((resposne) => {
-        if(!resposne){
-            // show notification password incorrect
+    OpenDatabase($("#ls_password").val()).then(ok => {
+        if (!ok) {
             notification("ls_pwd_incorrect", 5000);
-
-            // clean up password field
             $("#ls_password").val("");
-        }else{
-            keyToBase64(db_key).then(key => {
-                sessionStorage.setItem(SS_key, key);
-                SetActualPage(pageMain);
-            })
+        } else {
+            SetActualPage(pageMain);
         }
     });
-
 }
 
 function DeleteDB(){
@@ -200,7 +175,7 @@ async function SetAlias(alias, password){
         new TextEncoder().encode('verify')
     );
 
-    db.alias.add(
+    await db.alias.add(
         {
             id: 0, uid: createUUID(),
             name: alias,
@@ -239,13 +214,13 @@ async function deriveAESKey(password, salt) {
     return await crypto.subtle.deriveKey(
         {
             name: 'PBKDF2',
-            salt: salt, // Uint8Array(16)
+            salt: salt,
             iterations: 600000,
             hash: 'SHA-256'
         },
         keyMaterial,
         { name: 'AES-GCM', length: 256 },
-        true,
+        false,   // non-extractable — key can never be read as raw bytes
         ['encrypt', 'decrypt']
     );
 }
@@ -295,6 +270,21 @@ async function OpenDatabase(password){
     return false;
 }
 
+
+function OpenUserSettings() {
+    $("#in_settings_alias").val(db_alias.name);
+}
+
+async function RenameAlias() {
+    const newName = $("#in_settings_alias").val().trim();
+    if (!newName) return;
+
+    await db.alias.update(0, { name: newName });
+    db_alias.name = newName;
+    $("#in_alias").text(newName);
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById("in_user_settings")).hide();
+}
 
 function createUUID() {
     return crypto.randomUUID();

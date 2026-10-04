@@ -12,8 +12,8 @@ import (
 
 const StaticPath = "./dist/"
 
-func (s *Server) StartFileServer() {
-	servFile, err := NewFileHandler(os.Getenv("VAPID_PUBLIC_KEY"))
+func (s *Server) StartFileServer(info BuildInfo) {
+	servFile, err := NewFileHandler(os.Getenv("VAPID_PUBLIC_KEY"), info)
 	if err != nil {
 		slog.Error("failed to create file handler", slog.String("error", err.Error()))
 		return
@@ -25,26 +25,62 @@ func (s *Server) StartFileServer() {
 type fileHandler struct {
 	static    http.Handler
 	indexHTML []byte
+	swJS      []byte
 }
 
-func NewFileHandler(vapidPubKey string) (*fileHandler, error) {
-	tmpl, err := template.ParseFiles(filepath.Join(StaticPath, "index.html"))
-	if err != nil {
-		return nil, fmt.Errorf("parse index.html: %w", err)
+type templateData struct {
+	VAPIDPublicKey string
+	Version        string
+	Commit         string
+	BuildDate      string
+}
+
+func NewFileHandler(vapidPubKey string, info BuildInfo) (*fileHandler, error) {
+	data := templateData{
+		VAPIDPublicKey: vapidPubKey,
+		Version:        info.Version,
+		Commit:         info.Commit,
+		BuildDate:      info.BuildDate,
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, struct{ VAPIDPublicKey string }{vapidPubKey}); err != nil {
+	indexHTML, err := renderTemplate(filepath.Join(StaticPath, "index.html"), data)
+	if err != nil {
 		return nil, fmt.Errorf("render index.html: %w", err)
+	}
+
+	swJS, err := renderTemplate(filepath.Join(StaticPath, "service-worker.js"), data)
+	if err != nil {
+		return nil, fmt.Errorf("render service-worker.js: %w", err)
 	}
 
 	return &fileHandler{
 		static:    http.FileServer(http.Dir(StaticPath)),
-		indexHTML: buf.Bytes(),
+		indexHTML: indexHTML,
+		swJS:      swJS,
 	}, nil
 }
 
+func renderTemplate(path string, data any) ([]byte, error) {
+	tmpl, err := template.ParseFiles(path)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func (h *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Intercept service worker — serve rendered version with injected build info
+	if r.URL.Path == "/service-worker.js" {
+		w.Header().Set("Content-Type", "application/javascript")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(h.swJS)
+		return
+	}
+
 	path := filepath.Join(StaticPath, filepath.Clean(r.URL.Path))
 
 	_, err := os.Stat(path)

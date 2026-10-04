@@ -1,0 +1,42 @@
+import {Events} from "./event.js";
+
+export class Modal {
+    constructor(events) {
+        this._events = events;
+    }
+
+    async init() {
+        this._events.on(Events.MODAL.OPEN, async (modalId) => {
+            await this.openModal(modalId);
+        });
+
+        this._events.on(Events.MODAL.CLOSE, async (modalId) => {
+            await this.closeModal(modalId);
+        });
+    }
+
+    async openModal(modalId){
+        const modalEl = document.getElementById(modalId);
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+    }
+
+    async closeModal(modalId){
+        const modalEl = document.getElementById(modalId);
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.hide();
+    }
+}
+
+
+export const Modals = {
+    ROOM: {
+        SHARE_ROOM: "modal:room:share_room",
+        EDIT_ROOM: "modal:room:edit_room",
+        LEAVE_ROOM: "modal:room:leave_room",
+    },
+    HOME: {
+        JOIN_ROOM: "modal:home:join_room",
+        NEW_ROOM: "modal:room:new_room",
+    },
+};

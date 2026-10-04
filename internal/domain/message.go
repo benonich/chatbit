@@ -10,10 +10,10 @@ import (
 type Message struct {
 	ID        uuid.UUID `json:"id,omitempty"`
 	Type      int64     `json:"type,omitempty"` // 0: text, 1: image, 2: file
-	RoomID    uuid.UUID `json:"room_id,omitempty"`
+	RoomID    uuid.UUID `json:"roomId,omitempty"`
 	Alias     string    `json:"alias,omitempty"`
-	AliasID   string    `json:"alias_id,omitempty"`
-	Message   string    `json:"message,omitempty"`
+	AliasID   string    `json:"aliasId,omitempty"`
+	Content   string    `json:"content,omitempty"`
 	TimeStamp uint64    `json:"timestamp,omitempty"`
 	Store     bool      `json:"store,omitempty"`
 	TTL       int64     `json:"ttl,omitempty"`
@@ -32,8 +32,8 @@ func (m Message) GetTimestamp() uint64 {
 }
 
 type GetLastMessage struct {
-	RoomID         string `json:"room_id,omitempty"`
-	SinceTimeStamp uint64 `json:"since_timestamp,omitempty"`
+	RoomID         string `json:"roomId,omitempty"`
+	SinceTimeStamp uint64 `json:"sinceTimestamp,omitempty"`
 }
 
 type UUID string

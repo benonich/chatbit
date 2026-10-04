@@ -3,11 +3,10 @@
 // service worker usage on https://github.com/mozilla/serviceworker-cookbook
 //--------------------------------------------------------------------------
 
-// Cache version
-var CACHE_VERSION = '0.0.0-dev5'
+// Injected by Go server at startup — changes with every new build
+var CACHE_VERSION = '{{.Commit}}';
 
-// Cache name
-var CACHE_NAME = 'chatbit-v'+CACHE_VERSION;
+var CACHE_NAME = 'chatbit-v' + CACHE_VERSION;
 
 // Files
 var ASSETS_TO_CACHE = [
@@ -44,15 +43,14 @@ const IS_LOCALHOST =
 ========================= */
 self.addEventListener('install', event => {
     if (IS_LOCALHOST) {
-        // Kein Caching im Dev-Modus
         self.skipWaiting();
         return;
     }
 
     event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-            return cache.addAll(ASSETS_TO_CACHE);
-        })
+        caches.open(CACHE_NAME)
+            .then(cache => cache.addAll(ASSETS_TO_CACHE))
+            .then(() => self.skipWaiting())  // activate immediately, don't wait for tab close
     );
 });
 
@@ -65,17 +63,24 @@ self.addEventListener('activate', event => {
     }
 
     event.waitUntil(
-        caches.keys().then(keys =>
-            Promise.all(
-                keys
-                    .filter(key => key !== CACHE_NAME)
-                    .map(key => caches.delete(key))
+        caches.keys()
+            .then(keys =>
+                Promise.all(
+                    keys
+                        .filter(key => key !== CACHE_NAME)
+                        .map(key => caches.delete(key))
+                )
             )
-        )
+            .then(() => self.clients.claim())   // take control of all open tabs
+            .then(() => notifyClients())        // tell the app: new version is live
     );
-
-    self.clients.claim();
 });
+
+function notifyClients() {
+    return self.clients.matchAll({ type: 'window' }).then(clients => {
+        clients.forEach(client => client.postMessage({ type: 'SW_UPDATED' }));
+    });
+}
 
 /* =========================
    FETCH
@@ -99,7 +104,6 @@ self.addEventListener('fetch', event => {
     if (IGNORED_PATHS.some(path => url.pathname.startsWith(path))) {
         return;
     }
-
 
     /* 🧭 SPA-Navigation → index.html */
     if (request.mode === 'navigate') {

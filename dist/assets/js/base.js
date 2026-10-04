@@ -66,6 +66,21 @@ if (Chatbit.PWA.enable && 'serviceWorker' in navigator) {
         }
         return existing.update();
     }).catch(err => console.error('Service worker error:', err));
+
+    // Listen for SW_UPDATED message → show reload toast
+    navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data?.type !== 'SW_UPDATED') return;
+
+        pageBody.appendChild(document.createElement('div')).id = 'update-toast';
+        const toast = document.getElementById('update-toast');
+        toast.className = 'toast-box bg-primary toast-bottom tap-to-close';
+        toast.innerHTML =
+            "<div class='in'>" +
+            "<div class='text'>New version available!</div>" +
+            "<button class='btn btn-sm btn-light ms-2' onclick='window.location.reload()'>Update</button>" +
+            "</div>";
+        setTimeout(() => toast.classList.add('show'), 100);
+    });
 }
 
 //-----------------------------------------------------------------------

@@ -70,8 +70,10 @@ button:hover, button:active, button:focus {
   left: 0;
   right: 0;
   bottom: 56px;
-  overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overflow-y: scroll;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 .homeContent {
@@ -758,6 +760,16 @@ button:hover, button:active, button:focus {
 
 .close-sidebar-button:active {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Standardmäßig ausgeblendet */
+#ct_edit_room_ttl_row {
+  display: none !important;
+}
+
+/* Wenn die Checkbox innerhalb der Liste gecheckt ist -> anzeigen */
+ul:has(#ct_edit_room_store:checked) #ct_edit_room_ttl_row {
+  display: flex !important; /* oder block / row */
 }
 
 .action-group {

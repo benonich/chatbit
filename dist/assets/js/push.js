@@ -47,6 +47,10 @@ async function subscribe() {
     }
 
     let swRegistration = await navigator.serviceWorker.getRegistration();
+    if (!swRegistration) {
+        console.warn('No service worker registration found');
+        return;
+    }
     let pushManager = swRegistration.pushManager;
     if (!isPushManagerActive(pushManager)) {
         return;

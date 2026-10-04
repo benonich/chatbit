@@ -59,7 +59,7 @@
 
         <ul class="listview flush transparent no-line image-listview mt-2">
             <li>
-                <a href="/room" class="item" data-bs-toggle="modal" id="create_new_chat" data-bs-target="#in_add_room">
+                <a href="/room" class="item" data-bs-toggle="modal" id="create_new_chat" data-bs-target="#in_new_room">
                     <div class="icon-box bg-primary">
                         <ion-icon name="add-circle-outline"></ion-icon>
                     </div>
@@ -69,7 +69,7 @@
                 </a>
             </li>
             <li>
-                <a href="/room"  id="join_new_chat" class="item">
+                <a href="/room" class="item" data-bs-toggle="modal" id="join_new_chat" data-bs-target="#in_join_room">
                     <div class="icon-box bg-primary">
                         <ion-icon name="barcode-outline"></ion-icon>
                     </div>
@@ -90,7 +90,7 @@
         <a href="#" class="button" onclick="Logout()">
             <ion-icon name="trash-outline"></ion-icon>
         </a>
-        <a href="#" class="button">
+        <a href="#" class="button" data-bs-toggle="modal" data-bs-target="#in_user_settings" onclick="OpenUserSettings()">
             <ion-icon name="settings-outline"></ion-icon>
         </a>
         <a href="/lockscreen" class="button" id="change_to_lock">
@@ -103,7 +103,7 @@
 
 
 <!-- Modal Add Room -->
-<div class="modal fade modalbox" id="in_add_room" data-bs-backdrop="static" tabindex="-1" role="dialog">
+<div class="modal fade modalbox" id="in_new_room" data-bs-backdrop="static" tabindex="-1" role="dialog">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
             <div class="modal-header">
@@ -117,7 +117,7 @@
                         <h4>Fill the form to add a new Chat Room</h4>
                     </div>
                     <div class="section mt-4 mb-5">
-                        <form action="javascript:AddRoom()" >
+                        <form id="in_new_room_submit" >
                             <div class="form-group basic">
                                 <div class="input-wrapper">
                                     <label class="form-label" for="in_new_room_name">Room Name</label>
@@ -134,7 +134,7 @@
                                     <li>
                                         <div style="text-align: left" >Push Notifications</div>
                                         <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="in_new_room_push">
+                                            <input class="form-check-input" type="checkbox" id="in_new_room_push" checked>
                                             <label class="form-check-label" for="in_new_room_push"></label>
                                         </div>
                                     </li>
@@ -142,12 +142,12 @@
                                     <li>
                                         <div style="text-align: left" >Cloud Store</div>
                                         <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" id="in_new_room_store">
+                                            <input class="form-check-input" type="checkbox" id="in_new_room_store" checked>
                                             <label class="form-check-label" for="in_new_room_store"></label>
                                         </div>
                                     </li>
 
-                                    <li class="row" id="in_new_room_ttl_row" style="display: none;">
+                                    <li class="row" id="in_new_room_ttl_row">
                                         <div style="text-align: left" class="col-6" > - Delete After</div>
                                         <div class="col-3 input-wrapper">
                                             <input style="text-align: center" class="form-control" type="number" id="in_new_room_ttl" value="0">
@@ -195,6 +195,28 @@
                         <select id="camera-select" class="form-select mb-2"></select>
                         <div id="reader" style="width:100%"></div>
                         <video id="reader-video" playsinline autoplay muted style="width:100%;display:none"></video>
+
+                        <div class="mt-4 mb-2 text-center" style="color: var(--bs-secondary)">── or paste invite code ──</div>
+
+                        <div class="form-group basic">
+                            <div class="input-wrapper">
+                                <textarea class="form-control" id="in_paste_payload" rows="3"
+                                    placeholder="Paste invite code here..." oninput="OnPastePayloadChange()"></textarea>
+                            </div>
+                        </div>
+                        <div id="in_paste_pin_wrapper" style="display:none" class="form-group basic mt-1">
+                            <div class="input-wrapper">
+                                <label class="form-label" for="in_paste_pin">PIN</label>
+                                <input type="password" class="form-control" id="in_paste_pin" placeholder="Enter PIN">
+                                <i class="clear-input"><ion-icon name="close-circle"></ion-icon></i>
+                            </div>
+                        </div>
+                        <div id="in_paste_error" class="text-danger mt-1" style="display:none"></div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-primary btn-block" onclick="JoinByPaste()">
+                                <ion-icon name="enter-outline"></ion-icon> Join by Code
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -203,4 +225,42 @@
 </div>
 
 <!-- * Modal Join Room -->
+
+
+<!-- Modal User Settings -->
+<div class="modal fade modalbox" id="in_user_settings" data-bs-backdrop="static" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">ChatBit</h5>
+                <a href="#" data-bs-dismiss="modal">Close</a>
+            </div>
+            <div class="modal-body">
+                <div class="login-form">
+                    <div class="section mt-2">
+                        <h1>User Settings</h1>
+                        <h4>Update your profile</h4>
+                    </div>
+                    <div class="section mt-4 mb-5">
+                        <form action="javascript:RenameAlias()">
+                            <div class="form-group basic">
+                                <div class="input-wrapper">
+                                    <label class="form-label" for="in_settings_alias">Alias</label>
+                                    <input type="text" class="form-control" id="in_settings_alias" placeholder="Your alias">
+                                    <i class="clear-input">
+                                        <ion-icon name="close-circle"></ion-icon>
+                                    </i>
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <button type="submit" class="btn btn-primary btn-block btn-lg">Save</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- * Modal User Settings -->
 </div>

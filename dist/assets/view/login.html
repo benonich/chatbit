@@ -12,10 +12,11 @@
             <br>
             <div class="section mt-1">
                 <h1>ChatBit</h1>
-                <h4>Fill the form to log in</h4>
+                <h4>Fill the register form to log in</h4>
+                <p>User management is performed exclusively on the local device. <br>No credentials — including alias or passwords — are transmitted to any server at any time.</p>
             </div>
             <div class="section mt-1 mb-5">
-                <form id="login_submit">
+                <form id="login_submit" onsubmit="app.register(this); return false;">
                     <div class="form-group boxed">
                         <div class="input-wrapper">
                             <input type="text" class="form-control" id="lo_alias" placeholder="Alias">
@@ -35,7 +36,7 @@
                     </div>
 
                     <div class="form-button-group">
-                        <button type="submit" class="btn btn-primary btn-block btn-lg">Log in</button>
+                        <button type="submit" class="btn btn-primary btn-block btn-lg">Register</button>
                     </div>
 
                 </form>

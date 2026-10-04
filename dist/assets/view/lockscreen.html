@@ -17,7 +17,7 @@
         <div class="offcanvas-body">
             <ul class="action-button-list">
                 <li>
-                    <a href="#" class="btn btn-list" onclick="Logout()">
+                    <a href="#" class="btn btn-list" onclick="app.viewLock.clear(); return false;">
                         <span>Remove Database</span>
                     </a>
                 </li>
@@ -44,7 +44,7 @@
             </div>
 
             <div class="section mt-3 mb-5">
-                <form id="lock_submit" >
+                <form id="lock_submit" onsubmit="app.viewLock.unlock(this); return false;">
 
                     <div class="form-group boxed">
                         <div class="input-wrapper">
@@ -57,7 +57,7 @@
                     </div>
 
                     <div class="form-button-group">
-                        <button type="submit" class="btn btn-primary btn-block btn-lg">Sign in</button>
+                        <button type="submit" class="btn btn-primary btn-block btn-lg">Unlock</button>
                     </div>
 
                 </form>

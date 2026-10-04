@@ -112,7 +112,7 @@ func (c *WsClient) readPump() {
 	c.conn.SetPongHandler(func(string) error {
 		slog.Debug("receive pong", slog.String("UID:", c.UID.String()))
 
-		err := c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		err = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
 			slog.Error("error during SetReadDeadline", slog.String("error", err.Error()))
 		}
@@ -170,7 +170,6 @@ func (c *WsClient) readPump() {
 				err = c.psWsMsgAdapter.PublishTo(msg.RoomID, peer.ID, WsOutbound{MsgType: websocket.TextMessage, Data: message})
 				if err != nil {
 					slog.Debug("not possible send message over ws, peer is offline", slog.String("peer", peer.ID.String()), slog.String("error", err.Error()))
-
 					p, err := c.app.DB.Peer.Get(peer.ID[:])
 					if err != nil {
 						slog.Error("not possible to get peer", slog.String("error", err.Error()))
@@ -230,7 +229,6 @@ func (c *WsClient) readPump() {
 					continue
 				}
 			}
-
 		case domain.WsTypeJoinRoom:
 			join, ok := unmarshalWs[domain.JoinRooms](wsMsg.Data)
 			if !ok {

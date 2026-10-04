@@ -22,33 +22,32 @@ const (
 	idleTimeout       = 120 * time.Second
 )
 
-type Server struct {
-	app     *core.Application
-	Server  *http.Server
-	servMux *http.ServeMux
+type BuildInfo struct {
+	Version   string
+	Commit    string
+	BuildDate string
 }
 
-func NewServer(app *core.Application) *Server {
-	return &Server{app: app}
+type Server struct {
+	app       *core.Application
+	Server    *http.Server
+	servMux   *http.ServeMux
+	buildInfo BuildInfo
+}
+
+func NewServer(app *core.Application, info BuildInfo) *Server {
+	return &Server{app: app, buildInfo: info}
 }
 
 func (s *Server) Start() error {
-
-	//vapid.GenerateVapID()
-
 	// WebSocket connection
 	s.servMux = http.NewServeMux()
 
-	s.StartFileServer()
+	s.StartFileServer(s.buildInfo)
 
 	s.StartWebSocketServer()
 
 	s.startFileCleanup()
-
-	// Push notification
-	//servMux.HandleFunc("/vapidPublicKey", vapid.VapIDPubKeyFunc)
-	//servMux.HandleFunc("/subscribe", vapid.SubscribeFunc)
-	//servMux.HandleFunc("/send", vapid.SendFunc)
 
 	servObj := &http.Server{
 		Addr:              ":" + "8081",

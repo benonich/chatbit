@@ -168,7 +168,7 @@ func (ps *Adapter[U, T]) PublishTo(subID U, obj T) error {
 
 	ch, ok := ps.subs[subID]
 	if !ok {
-		return fmt.Errorf("cna't found subscriber id: %w", ErrSubscriberMissing)
+		return fmt.Errorf("can't found subscriber id: %w", ErrSubscriberMissing)
 	}
 
 	select {
@@ -192,7 +192,7 @@ func (ps *Adapter[U, T]) PublishToExclude(subID U, obj T) error {
 
 	ch, ok := ps.subs[subID]
 	if !ok {
-		return fmt.Errorf("cna't found subscriber id: %w", ErrSubscriberMissing)
+		return fmt.Errorf("can't found subscriber id: %w", ErrSubscriberMissing)
 	}
 
 	select {

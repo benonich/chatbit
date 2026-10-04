@@ -35,7 +35,7 @@
     <!-- chat footer -->
     <div class="chatFooter">
 
-        <form onsubmit="SendMessage(); return false">
+        <form id="send_message_form" >
             <div class="dropdown">
                 <button class="btn btn-icon btn-primary rounded" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                     <i class="bi bi-plus-lg"></i>
@@ -57,7 +57,7 @@
                     </i>
                 </div>
             </div>
-            <button type="button" class="btn btn-icon btn-primary rounded" onclick="SendMessage()">
+            <button type="submit" class="btn btn-icon btn-primary rounded">
                 <ion-icon name="send"></ion-icon>
             </button>
         </form>
@@ -80,6 +80,18 @@
                     </div>
                     <div class="section mt-4 mb-5">
                         <div id="ct_qr_code"></div>
+                        <div class="form-group basic mt-3">
+                            <div class="input-wrapper">
+                                <label class="form-label" for="ct_share_pin">PIN (optional)</label>
+                                <input type="password" class="form-control" id="ct_share_pin" placeholder="Encrypt with PIN">
+                                <i class="clear-input"><ion-icon name="close-circle"></ion-icon></i>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <button id="ct_copy_payload_btn" type="button" class="btn btn-primary btn-block" onclick="CopySharePayload()">
+                                <ion-icon name="copy-outline"></ion-icon> Copy Code
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
