@@ -12,12 +12,12 @@ var FileDir = "/Users/benoni/code/benoni/chatbit/files"
 type File struct {
 	Message
 
-	TotalSize  int64  `json:"total_size"`
-	ChunkTotal int64  `json:"chunks_total"`
-	ChunkSize  int64  `json:"chunk_size"`
+	TotalSize  int64  `json:"totalSize"`
+	ChunkTotal int64  `json:"chunksTotal"`
+	ChunkSize  int64  `json:"chunkSize"`
 	Chunks     int64  `json:"chunks"`
-	MimeType   string `json:"mime_type"`
-	SHA256     string `json:"sha_256"`
+	MimeType   string `json:"mimeType"`
+	SHA256     string `json:"sha256"`
 }
 
 type Transfer struct {

@@ -474,20 +474,25 @@ function EditActiveRoom(){
 }
 
 
-async function getOrRequestFile(fileId, callback) {
+async function getOrRequestFile(fileId) {
     const file = await db.file.get(fileId);
 
     if (file) {
-        callback(file);
-        return;
+        return file;
     }
+
+
 
     const handler = async ({fileId: id}) => {
         if (id !== fileId) return;
+
         events.off('chat:file_ready', handler);
+
         const file = await db.file.get(fileId);
-        callback(file);
+        return file;
     };
+
+    this._events.
 
     events.on('chat:file_ready', handler);
     ws.transferRequest({id: fileId, room_id: room_id});

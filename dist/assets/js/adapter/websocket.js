@@ -1,5 +1,6 @@
 import {Events} from "./event.js";
 import {Message} from "../domain/message.js";
+import {File} from "../domain/file.js";
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
 
@@ -14,7 +15,7 @@ export class WebSocketAdapter {
     constructor(events, db) {
         this.conn = null;
         this._events = events;
-        this._db   = db;
+        this._db = db;
         this._pendingAck = null;
         this._bufferedAcks = new Map();
         this._incomingTransfers = new Map();
@@ -32,13 +33,13 @@ export class WebSocketAdapter {
         this._events.off(Events.STATE.UNLOCK, this.handler);
 
 
-        const rooms    = await this._db.getRooms();
+        const rooms = await this._db.getRooms();
         const allRooms = rooms.map(r => ({id: r.id, notification: r.push_notifications}));
-        const lastTimeStamp  = await this._db.getLatestTimestamp();
+        const lastTimeStamp = await this._db.getLatestTimestamp();
 
         this.joinRooms({
-            rooms:               allRooms,
-            last_connection_time: lastTimeStamp,
+            rooms: allRooms,
+            lastConnectionTime: lastTimeStamp,
         });
 
         this._events.emit(Events.WS.READY);
@@ -47,19 +48,28 @@ export class WebSocketAdapter {
     init() {
         this._events.on(Events.STATE.UNLOCK, this.handler);
 
+        this._events.on(Events.WS.SEND_FILE, async (msg) => {
+            this.transferStart(msg)
+            await this.sendFile(msg);
+        });
+
         this._events.on(Events.WS.SEND_MESSAGE, async (msg) => {
             this.sendMessage(msg);
         });
 
         this._events.on(Events.WS.JOIN_ROOM, async (roomId) => {
             this.joinRooms({
-                rooms:               [roomId],
+                rooms: [roomId],
                 last_connection_time: 0,
             });
         });
 
         this._events.on(Events.WS.LEAVE_ROOM, async (roomId) => {
             this.leaveRooms({rooms: [roomId]});
+        });
+
+        this._events.on(Events.WS.TRANSFER_REQUEST, async (msg) => {
+            this.transferRequest(msg);
         });
 
 
@@ -123,12 +133,31 @@ export class WebSocketAdapter {
         this.conn.send(JSON.stringify({type, data: msg}));
     }
 
-    sendMessage(msg)      { this.conn.send(JSON.stringify({type: "message",         data: msg})); }
-    joinRooms(msg)        { this.conn.send(JSON.stringify({type: "join_rooms",       data: msg})); }
-    leaveRooms(msg)       { this.conn.send(JSON.stringify({type: "leave_rooms",      data: msg})); }
-    subscribePush(msg)    { this.conn.send(JSON.stringify({type: "sub_push",         data: msg})); }
-    transferRequest(msg)  { this.conn.send(JSON.stringify({type: "transfer_request", data: msg})); }
-    transferStart(msg)    { this.conn.send(JSON.stringify({type: "transfer_start",   data: msg})); }
+    sendMessage(msg) {
+        this.conn.send(JSON.stringify({type: "message", data: msg}));
+    }
+
+    joinRooms(msg) {
+        this.conn.send(JSON.stringify({type: "join_rooms", data: msg}));
+    }
+
+    leaveRooms(msg) {
+        this.conn.send(JSON.stringify({type: "leave_rooms", data: msg}));
+    }
+
+    subscribePush(msg) {
+        this.conn.send(JSON.stringify({type: "sub_push", data: msg}));
+    }
+
+    // request image or data from server
+    transferRequest(msg) {
+        this.conn.send(JSON.stringify({type: "transfer_request", data: msg}));
+    }
+
+    // start to send image or data to server
+    transferStart(msg) {
+        this.conn.send(JSON.stringify({type: "transfer_start", data: msg}));
+    }
 
     // -------------------------------------------------------------------------
     // Incoming message dispatch
@@ -150,8 +179,8 @@ export class WebSocketAdapter {
                 break;
             case "transfer_start":
                 this._handleTransferStart(
-                    msg.data.id, msg.data.room_id, msg.data.mime_type,
-                    msg.data.timestamp, msg.data.chunks_total, msg.data.chunk_size
+                    msg.data.id, msg.data.roomId, msg.data.mimeType,
+                    msg.data.timestamp, msg.data.chunksTotal, msg.data.chunkSize
                 );
                 break;
             case "transfer_done":
@@ -166,19 +195,19 @@ export class WebSocketAdapter {
     // Incoming binary transfer
     // -------------------------------------------------------------------------
 
-    _handleTransferStart(id, room_id, mime_type, timestamp, chunks_total, chunk_size) {
-        console.log("transfer start", id, chunks_total, "chunks");
+    _handleTransferStart(id, roomId, mimeType, timestamp, chunksTotal, chunkSize) {
+        console.log("transfer start", id, chunksTotal, "chunks");
         this._incomingTransfers.set(id, {
-            room_id, mime_type, timestamp,
-            chunks: new Array(chunks_total).fill(null),
-            chunks_size: chunk_size,
+            roomId, mimeType, timestamp,
+            chunks: new Array(chunksTotal).fill(null),
+            chunksSize: chunkSize,
             received: 0,
-            chunks_total,
+            chunksTotal,
         });
     }
 
     _handleIncomingChunk(data) {
-        const view      = new DataView(data);
+        const view = new DataView(data);
         const uuidBytes = new Uint8Array(data, 0, 16);
         const id = [
             uuidBytes.slice(0, 4), uuidBytes.slice(4, 6),
@@ -186,7 +215,7 @@ export class WebSocketAdapter {
             uuidBytes.slice(10, 16),
         ].map(b => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('')).join('-');
 
-        const chunkId   = view.getUint32(16, false);
+        const chunkId = view.getUint32(16, false);
         const encrypted = data.slice(20);
 
         const t = this._incomingTransfers.get(id);
@@ -199,10 +228,13 @@ export class WebSocketAdapter {
     // No DB access — the consumer saves the file.
     _assembleTransfer(fileId) {
         const t = this._incomingTransfers.get(fileId);
-        if (!t) { console.error("unknown transfer:", fileId); return; }
+        if (!t) {
+            console.error("unknown transfer:", fileId);
+            return;
+        }
 
         const totalLength = t.chunks.reduce((sum, c) => sum + c.byteLength, 0);
-        const combined    = new Uint8Array(totalLength);
+        const combined = new Uint8Array(totalLength);
         let offset = 0;
         for (const chunk of t.chunks) {
             combined.set(new Uint8Array(chunk), offset);
@@ -210,32 +242,38 @@ export class WebSocketAdapter {
         }
         this._incomingTransfers.delete(fileId);
 
-        this._events.emit('ws:file_done', {
-            id:        fileId,
-            roomId:    t.room_id,
-            mimeType:  t.mime_type,
+        const fileM = new File({
+            id: fileId,
+            roomId: t.roomId,
+            mimeType: t.mimeType,
             timestamp: t.timestamp,
-            buffer:    combined.buffer,
+            blob: combined.buffer,
+            chunkSize: t.chunkSize,
+            ttl: t.ttl,
+            store: t.store,
+            totalSize: t.totalSize,
         });
+
+        this._events.emit(Events.WS.RECEIVED_FILE, fileM);
     }
 
     // -------------------------------------------------------------------------
     // Outgoing binary transfer
     // -------------------------------------------------------------------------
 
-    async sendFile(buf, totalChunks, id) {
-        for (let i = 0; i < totalChunks; i++) {
-            await this.waitForAck(id, i);
-            const chunk  = buf.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-            const header = this._encodeChunkHeader(id, i);
+    async sendFile(msg) {
+        for (let i = 0; i < msg.chunksTotal; i++) {
+            await this.waitForAck(msg.id, i);
+            const chunk = msg.blob.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+            const header = this._encodeChunkHeader(msg.id, i);
             this.conn.send(this._concat(header, chunk));
         }
-        this.conn.send(JSON.stringify({type: 'transfer_done', data: {id}}));
+        this.conn.send(JSON.stringify({type: 'transfer_done', data: {id: msg.id}}));
     }
 
     _encodeChunkHeader(id, index) {
-        const buf       = new ArrayBuffer(20);
-        const view      = new DataView(buf);
+        const buf = new ArrayBuffer(20);
+        const view = new DataView(buf);
         const uuidBytes = id.replace(/-/g, '').match(/.{2}/g).map(h => parseInt(h, 16));
         uuidBytes.forEach((b, i) => view.setUint8(i, b));
         view.setUint32(16, index, false); // big-endian
@@ -250,8 +288,13 @@ export class WebSocketAdapter {
     }
 
     // Keep old public names for callers that use them directly
-    encodeChunkHeader(id, index) { return this._encodeChunkHeader(id, index); }
-    concat(a, b)                 { return this._concat(a, b); }
+    encodeChunkHeader(id, index) {
+        return this._encodeChunkHeader(id, index);
+    }
+
+    concat(a, b) {
+        return this._concat(a, b);
+    }
 
     // -------------------------------------------------------------------------
     // Flow control — ACK/NACK for outgoing chunks

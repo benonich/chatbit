@@ -32,6 +32,11 @@ export const Events = {
     WS: {
         SEND_MESSAGE: 'ws:send_message',
         RECEIVED_MESSAGE: 'ws:received_message',
+        RECEIVED_FILE: 'ws:received_file',
+
+        TRANSFER_REQUEST: 'ws:transfer_request',
+        TRANSFER_DONE: 'ws:transfer_done',
+
         JOIN_ROOM: 'ws:join_room',
         LEAVE_ROOM: 'ws:leave_room',
         SUBSCRIBE_PUSH: 'ws:subscribe_push',
@@ -40,9 +45,10 @@ export const Events = {
     CHAT: {
         MESSAGE: 'chat:message',  // todo
         SEND_MESSAGE: 'chat:send_message',
+        SEND_FILE: 'chat:send_file',
         SYNCED: 'chat:synced',
-        FILE_REQUEST: 'chat:file_request',
-        FILE_READY: 'chat:file_ready',
+
+        OPEN_IMAGE: 'chat:open_image',
 
         SHARE_ACTIVE_ROOM: 'chat:share_active_room',
         EDIT_ACTIVE_ROOM: 'chat:edit_active_room',

@@ -1,8 +1,11 @@
 import {Events} from "./event.js";
 import {Pages} from "./page.js";
 import {Message} from "../domain/message.js";
+import {File} from "../domain/file.js";
 import {Modals} from "./modal.js";
 import {Room} from "../domain/room.js";
+
+const CHUNK_SIZE = 64 * 1024; // 64KB
 
 export class ViewRoom {
     constructor(events, aes, keyStore, db) {
@@ -60,6 +63,28 @@ export class ViewRoom {
             await this._shareRoom();
         });
 
+        this._events.on(Events.CHAT.SEND_FILE, async (msg) => {
+            await this.sendFile();
+        });
+
+        this._events.on(Events.CHAT.OPEN_IMAGE, async (fileId) => {
+            console.log(`Open File with ID: ${fileId}`);
+
+            try {
+                let file = await this.getOrRequestFile(fileId);
+                console.log(file);
+
+
+
+                await this.showImageModal(file);
+            } catch (error) {
+                // Fängt sowohl Netzwerk-/Transferfehler als auch Timeouts zentral ab
+                console.error(`Fehler beim Laden der Datei ${fileId}:`, error.message);
+            }
+
+        });
+
+
         this._events.on(Events.CHAT.EDIT_ACTIVE_ROOM, async (msg) => {
             console.log("Edit Active Room");
             this._events.emit(Events.MODAL.OPEN, Modals.ROOM.EDIT_ROOM);
@@ -88,11 +113,10 @@ export class ViewRoom {
         });
 
         this._events.on(Events.CHAT.CLEAN_ACTIVE_ROOM, async (msg) => {
-            console.log("Clean Active Room");
-            this._cleanActiveRoom();
-
             console.log("Clean Active Room DB ID:", this._roomId);
             await this._db.cleanRoom(this._roomId);
+            console.log("Clean Active Room");
+            this._cleanActiveRoom();
         });
 
         this._events.on(Events.CHAT.MESSAGE, async (msg) => {
@@ -269,6 +293,151 @@ export class ViewRoom {
         this._db.removeRoom(roomId);
     }
 
+    async sendFile() {
+        let f = document.getElementById("ct_img_input");
+
+        // ignore empty messages
+        if(f.files.length === 0){
+            return
+        }
+
+        const inputFile = f.files[0];
+
+        const file = await this.limitToHD(inputFile);
+
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+
+        let timeStamp = new Date();
+
+        let msg = new Message({
+            id: crypto.randomUUID(),
+            roomId: this._roomId,
+            alias: await this._aes.encrypt(this._alias, this._roomKey),
+            aliasId: await this._aes.encrypt(this._aliasId, this._roomKey),
+            timestamp: timeStamp.getTime(),
+            type: Message.TYPE_IMAGE,
+            synced: false,
+            chunkSize: CHUNK_SIZE,
+            chunksTotal: totalChunks,
+            ttl: this._roomTTL,
+            store: this._roomStore
+        });
+
+        let fileM = new File({
+            id: msg.id,
+            blob: await this._aes.encryptFile(file, this._roomKey),
+            roomId: this._roomId,
+            chunkSize: CHUNK_SIZE,
+            chunksTotal: totalChunks,
+            ttl: this._roomTTL,
+            store: this._roomStore,
+            mimeType: file.type,
+            totalSize: file.size,
+        });
+
+        //ws.transferStart(msg)
+
+        //await db.file.add({
+        //    id: msg.id,
+        //    room_id: room_id,
+        //    blob: fileEnc,
+        //    mime_type: file.type,
+        //    timestamp: timeStamp.getTime(),
+        //})
+
+        //await ws.sendFile(fileEnc, totalChunks, msg.id);
+
+
+        f.files = null;
+
+        this._db.addFile(fileM);
+        this._events.emit(Events.WS.SEND_FILE, fileM);
+
+        await this._newMessage(msg);
+        this._events.emit(Events.WS.SEND_MESSAGE, msg);
+    }
+
+
+    async getOrRequestFile(fileId, timeoutMs = 15000) {
+        // 1. Schneller Pfad: Ressource bereits vorhanden (spart Netz- und Event-Overhead)
+        const cachedFile = await this._db.getFile(fileId);
+        if (cachedFile) {
+            return cachedFile;
+        }
+
+        console.log(`File is not in DB present requesting file ${fileId}`);
+
+        // 2. Auf Event warten und das Ergebnis als Promise bereitstellen
+        return new Promise((resolve, reject) => {
+            let timer = null;
+
+            const cleanup = () => {
+                if (timer) clearTimeout(timer);
+                this._events.off(Events.WS.RECEIVED_FILE, onDone);
+            };
+
+            const onDone = async ({ fileId: incomingId, error }) => {
+                // Unpassende Events ignorieren
+                if (incomingId !== fileId) return;
+
+                cleanup();
+
+                if (error) {
+                    return reject(new Error(error));
+                }
+
+                try {
+                    const file = await this._db.getFile(fileId);
+                    resolve(file);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+
+            // Timeout verhindert blockierte Prozesse und Speicherlecks
+            timer = setTimeout(() => {
+                cleanup();
+                reject(new Error(`Timeout: Dateiübertragung für '${fileId}' nicht rechtzeitig abgeschlossen.`));
+            }, timeoutMs);
+
+            // Listener registrieren und Anfrage absenden
+            this._events.on(Events.WS.RECEIVED_FILE, onDone);
+            this._events.emit(Events.WS.TRANSFER_REQUEST, { id: fileId, roomId: this._roomId });
+        });
+    }
+
+    async limitToHD(file, quality = 0.85) {
+        const MAX = 2560;
+
+        let bitmap;
+        try {
+            bitmap = await createImageBitmap(file);
+        } catch (e) {
+            console.warn('Image decode failed, sending original:', file.type, e);
+            return file;
+        }
+
+        if (bitmap.width <= MAX && bitmap.height <= MAX) {
+            return file;
+        }
+
+        const scale = Math.min(MAX / bitmap.width, MAX / bitmap.height);
+        const width  = Math.round(bitmap.width  * scale);
+        const height = Math.round(bitmap.height * scale);
+
+        const canvas = new OffscreenCanvas(width, height);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+
+        // HEIC → immer als JPEG ausgeben
+        const isHEIC = file.type === 'image/heic' ||
+            file.type === 'image/heif' ||
+            file.name?.toLowerCase().endsWith('.heic') ||
+            file.name?.toLowerCase().endsWith('.heif');
+
+        const outputType = isHEIC ? 'image/jpeg' : file.type;
+        return await canvas.convertToBlob({ type: outputType, quality });
+    }
+
     async sendMessage(){
         const msgRaw = document.getElementById("ct_msg_input").value;
 
@@ -318,12 +487,20 @@ export class ViewRoom {
     }
 
     async _renderMessage(msg) {
-        const alias = await this._aes.decrypt(msg.alias, this._roomKey);
-        const aliasId = await this._aes.decrypt(msg.aliasId, this._roomKey);
+        if (msg.alias === undefined) {
+            return;
+        }
 
         console.log("Rendering message", msg);
 
-        const content = await this._aes.decrypt(msg.content, this._roomKey);
+        const alias = await this._aes.decrypt(msg.alias, this._roomKey);
+        const aliasId = await this._aes.decrypt(msg.aliasId, this._roomKey);
+
+        let content;
+
+        if (!msg.isImage()) {
+            content = await this._aes.decrypt(msg.content, this._roomKey);
+        }
 
         const isOwn    = aliasId === this._aliasId;
         const bubble   = msg._renderBubble(content);
@@ -377,6 +554,55 @@ export class ViewRoom {
             ? '<ion-icon name="checkmark-done-outline"></ion-icon>'
             : '<ion-icon name="checkmark-outline"></ion-icon>'
         );
+    }
+
+    async showImageModal(file) {
+        const url = await this._aes.decryptFile(file.blob, file.mimeType, this._roomKey);
+
+        const img = document.querySelector('#ct_image img');
+
+        if (img.dataset.objectUrl) URL.revokeObjectURL(img.dataset.objectUrl);
+
+        img.src = url;
+        img.dataset.objectUrl = url;
+
+        $("#ct_image").modal('show');
+
+        document.getElementById('share-btn').addEventListener('click', async (e) => {
+            e.preventDefault();
+            const imgSrc = document.getElementById('modal-image').src;
+
+            // Web Share API (iPhone/Android)
+            if (navigator.share) {
+                try {
+                    const response = await fetch(imgSrc);
+                    const blob = await response.blob();
+                    const file = new File([blob], 'image.jpg', { type: blob.type });
+
+                    await navigator.share({
+                        files: [file],
+                        title: 'Image',
+                    });
+                } catch (err) {
+                    if (err.name !== 'AbortError') console.error(err);
+                }
+            } else {
+                // Fallback: Download
+                const a = document.createElement('a');
+                a.href = imgSrc;
+                a.download = 'image.jpg';
+                a.click();
+            }
+        });
+
+        $("#ct_image").on('hidden.bs.modal', () => {
+            const img = document.querySelector('#ct_image img');
+            if (img.dataset.objectUrl) {
+                URL.revokeObjectURL(img.dataset.objectUrl);
+                delete img.dataset.objectUrl;
+                img.src = '';
+            }
+        });
     }
 
 }

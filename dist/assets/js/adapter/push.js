@@ -1,3 +1,4 @@
+// This is a class for handling push notifications
 import {Events} from "./event.js";
 
 export class Push {

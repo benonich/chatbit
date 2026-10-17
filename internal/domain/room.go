@@ -15,7 +15,7 @@ type Room struct {
 
 type JoinRooms struct {
 	Rooms              []RoomPeer `json:"rooms,omitempty"`
-	LastConnectionTime uint64     `json:"lastConnection_time,omitempty"`
+	LastConnectionTime uint64     `json:"lastConnectionTime,omitempty"`
 }
 
 type RoomPeer struct {

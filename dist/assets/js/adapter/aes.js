@@ -63,6 +63,37 @@ export class AesAdapter {
         return new TextDecoder().decode(decrypted);
     }
 
+
+    async encryptFile(fileOrBlob, key) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const buf = await fileOrBlob.arrayBuffer();
+
+        const encrypted = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv },
+            await key,
+            buf
+        );
+
+        const result = new Uint8Array(12 + encrypted.byteLength);
+        result.set(iv, 0);
+        result.set(new Uint8Array(encrypted), 12);
+        return result.buffer; // ArrayBuffer — kein Base64-Overhead
+    }
+
+    async decryptFile(encryptedBuffer, mimeType, key) {
+        const data = new Uint8Array(encryptedBuffer);
+        const iv = data.slice(0, 12);
+        const payload = data.slice(12);
+
+        const decrypted = await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv },
+            await key,
+            payload
+        );
+
+        return URL.createObjectURL(new Blob([decrypted], { type: mimeType }));
+    }
+
     // -------------------------------------------------------------------------
     // Encrypt / Decrypt by PIN
     // -------------------------------------------------------------------------

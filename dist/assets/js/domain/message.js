@@ -140,7 +140,9 @@ export class Message {
     _renderBubble(content) {
         if (this.isImage()) {
             return `<button type="button" class="btn btn-secondary"
-                        onclick='getOrRequestFile("${this.id}", (file) => { showImageModal(file); })'>
+                        data-action="chat:open_image"
+                        data-body="${this.id}"
+                    >
                         Image
                     </button>`;
         }

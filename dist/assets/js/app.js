@@ -1,12 +1,12 @@
 import {EventBus, Events} from './adapter/event.js';
-import { AesAdapter }        from './adapter/aes.js';
-import { DatabaseAdapter }        from './adapter/database.js';
-import { WebSocketAdapter }        from './adapter/websocket.js';
-import { KeyStore }        from './adapter/key_store.js';
-import { Page, Pages }        from './adapter/page.js';
-import { ViewLock } from "./adapter/view_lock.js";
+import {AesAdapter} from './adapter/aes.js';
+import {DatabaseAdapter} from './adapter/database.js';
+import {WebSocketAdapter} from './adapter/websocket.js';
+import {KeyStore} from './adapter/key_store.js';
+import {Page, Pages} from './adapter/page.js';
+import {ViewLock} from "./adapter/view_lock.js";
 import ViewHome from "./adapter/view_home.js";
-import { ViewRoom } from "./adapter/view_room.js";
+import {ViewRoom} from "./adapter/view_room.js";
 import {QRScanner} from "./adapter/scanner.js";
 import {Modal} from "./adapter/modal.js";
 import {Notification} from "./adapter/notification.js";
@@ -15,9 +15,9 @@ import {Push} from "./adapter/push.js";
 export class App {
     constructor() {
         this.events = new EventBus();
-        this.aes    = new AesAdapter();
-        this.db     = new DatabaseAdapter(this.aes, this.events );
-        this.ws     = new WebSocketAdapter(this.events, this.db);
+        this.aes = new AesAdapter();
+        this.db = new DatabaseAdapter(this.aes, this.events);
+        this.ws = new WebSocketAdapter(this.events, this.db);
         this.keyStore = new KeyStore(this.aes, this.db);
         this.page = new Page(this.events);
         this.viewLock = new ViewLock(this.events, this.keyStore, this.db);
@@ -46,7 +46,7 @@ export class App {
 
     }
 
-    _activateListener(){
+    _activateListener() {
         console.log("start event listener")
 
         document.addEventListener("click", (e) => {
@@ -59,14 +59,23 @@ export class App {
 
             this.events.emit(btn.dataset.action, btn.dataset.body);
         })
+
+        // Globaler Change-Listener
+        document.addEventListener("change", (e) => {
+            const target = e.target.closest("[data-change]");
+            if (!target) return;
+
+            // Übergabe des Elements oder relevanter Daten an den EventBus
+            this.events.emit(target.dataset.change, target);
+        });
     }
 
-    async _checkIsUserLoggedIn(){
+    async _checkIsUserLoggedIn() {
         const page = ""
 
         console.log("Check if user is logged in");
 
-        if (!this.keyStore.isUnlocked()){
+        if (!this.keyStore.isUnlocked()) {
             console.log("database is locked");
             if (!await this.db.isInitialized()) {
                 console.log("database is not initialized");
@@ -81,7 +90,7 @@ export class App {
         }
     }
 
-    async register(form){
+    async register(form) {
         console.log("New Register");
 
         const password = form.querySelector('#lo_password').value;
@@ -90,13 +99,11 @@ export class App {
         await this.keyStore.register(alias, password);
 
 
-
         await this._unlockEvent();
     }
 
 
-
-    async _unlockEvent(){
+    async _unlockEvent() {
         const profile = await this.db.getProfile();
 
         this.events.emit(Events.STATE.UNLOCK, profile);

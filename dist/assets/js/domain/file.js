@@ -1,0 +1,75 @@
+// domain/file.js
+// Represents a single chat message — always holds decrypted values
+// Encryption/decryption is handled by the adapter layer, not here
+
+export class File {
+    static TYPE_TEXT  = 0;
+    static TYPE_IMAGE = 1;
+
+    constructor({ id, roomId, blob, ttl, store,
+                  mimeType, totalSize, chunkSize, chunksTotal }) {
+        this.id          = id ?? crypto.randomUUID();
+        this.roomId      = roomId;
+        this.blob     = blob;
+        this.mimeType    = mimeType;
+        this.totalSize   = totalSize;
+        this.chunkSize   = chunkSize;
+        this.chunksTotal = chunksTotal;
+        this.ttl         = ttl ?? 0;
+        this.store       = store ?? false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Factories — JSON → Message
+    // -------------------------------------------------------------------------
+
+    // From a decrypted DB row or decrypted WS payload
+    // The adapter decrypts alias, alias_id and message before calling this
+    static fromJSON(row) {
+        return new File({
+            // Required fields
+            id:        row.id,
+            roomId:    row.roomId,
+            blob:       row.blob,
+            mimeType:    row.mimeType,
+            totalSize:   row.totalSize,
+            chunkSize:   row.chunkSize,
+            chunksTotal: row.chunksTotal,
+            ttl:       row.ttl,
+            store:     row.store,
+        });
+    }
+
+    static fromDB(row) {
+        return new File({
+            // Required fields
+            id:        row.id,
+            roomId:    row.roomId,
+            blob:       row.blob,
+            mimeType:    row.mimeType,
+            totalSize:   row.totalSize,
+            chunkSize:   row.chunkSize,
+            chunksTotal: row.chunksTotal,
+            ttl:       row.ttl,
+            store:     row.store,
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // Serialization — Message → JSON (adapter encrypts fields before storing/sending)
+    // -------------------------------------------------------------------------
+
+    toJSON() {
+        return {
+            id: this.id,
+            roomId: this.roomId,
+            blob: this.blob,
+            mimeType: this.mimeType,
+            totalSize: this.totalSize,
+            chunkSize: this.chunkSize,
+            chunksTotal: this.chunksTotal,
+            ttl: this.ttl,
+            store: this.store,
+        };
+    }
+}

@@ -19,15 +19,21 @@ export class DatabaseAdapter {
         this.db = new Dexie('ChatBit_DB');
 
         this.db.version(1).stores({
-            profile:  '&id, &uid, name',
-            message:   '&id, roomId, timestamp',
-            room:   '&id',
-            file:   '&id, roomId, timestamp',
+            profile: '&id, &uid, name',
+            message: '&id, roomId, timestamp',
+            room: '&id',
+            file: '&id, roomId, timestamp',
         });
 
         // subscribe to new messages
         this._events.on(Events.WS.RECEIVED_MESSAGE, async (msg) => {
-            this.db.message.add(msg);
+            console.log("Received message:", msg.type);
+            await this.addMessage(msg);
+        });
+
+        this._events.on(Events.WS.RECEIVED_FILE, async (msg) => {
+            console.log("Received file:", msg.id);
+            await this.addFile(msg);
         });
     }
 
@@ -41,16 +47,16 @@ export class DatabaseAdapter {
     }
 
     async getProfile() {
-        const profile =  await this.db.profile.get({id: 0})
+        const profile = await this.db.profile.get({id: 0})
         return Profile.fromDB(profile);
     }
 
-    async addFile(file) {
-        await this.db.message.add(file);
+    async addFile(fileM) {
+        await this.db.file.add(fileM);
     }
 
     async getFile(fileId) {
-        return  await this.db.message.where({id:fileId});
+        return await this.db.file.get(fileId);
     }
 
     async updateMessage(msg) {
@@ -62,7 +68,7 @@ export class DatabaseAdapter {
     }
 
     async getMessage(id) {
-        return this.db.message.where({id:id});
+        return this.db.message.where({id: id});
     }
 
     async getLatestTimestamp() {
@@ -72,7 +78,7 @@ export class DatabaseAdapter {
     }
 
     async getLatestMessages(roomId) {
-        const messages = await this.db.message.where({ roomId: roomId }).limit(100).sortBy('timestamp');
+        const messages = await this.db.message.where({roomId: roomId}).limit(100).sortBy('timestamp');
 
         let messagesArray = [];
 
@@ -99,10 +105,16 @@ export class DatabaseAdapter {
     async cleanRoom(roomId) {
         await this.db.message.where('roomId').equals(roomId).delete();
         await this.db.file.where('roomId').equals(roomId).delete();
+
+        await this.addMessage(new Message({
+            id: crypto.randomUUID(),
+            roomId: roomId,
+            timestamp: Date.now(),
+        }));
     }
 
     async getRoom(roomId) {
-        const roomDB =  await this.db.room.where({id: roomId}).first();
+        const roomDB = await this.db.room.where({id: roomId}).first();
 
         return Room.fromDB(roomDB);
     }
