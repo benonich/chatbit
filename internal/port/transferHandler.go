@@ -4,6 +4,7 @@ import (
 	"chatbit/internal/domain"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -111,7 +112,7 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
 	}
 
-	err = c.psWsMsgAdapter.PublishExclude(t.Message.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB})
+	err = c.psWsMsgAdapter.PublishExclude(t.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB})
 	if err != nil {
 		slog.Error("not possible to update file in database", slog.String("error", err.Error()))
 		return
@@ -141,7 +142,7 @@ func (c *WsClient) handleChunk(data []byte) {
 	}
 
 	if t.Store {
-		// Direkt an den richtigen Offset schreiben – kein Assembly nötig
+		// Write directly at the right offset – no reassembly needed
 		offset := chunkId * t.ChunkSize // chunkSize = 64*1024
 		_, err = t.OsFile.WriteAt(payload, offset)
 		if err != nil {
@@ -200,7 +201,7 @@ func (c *WsClient) sendFileTransferStart(file *domain.File) error {
 
 			index++
 		}
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {

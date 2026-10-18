@@ -63,7 +63,6 @@ export class AesAdapter {
         return new TextDecoder().decode(decrypted);
     }
 
-
     async encryptFile(fileOrBlob, key) {
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const buf = await fileOrBlob.arrayBuffer();
@@ -77,7 +76,7 @@ export class AesAdapter {
         const result = new Uint8Array(12 + encrypted.byteLength);
         result.set(iv, 0);
         result.set(new Uint8Array(encrypted), 12);
-        return result.buffer; // ArrayBuffer — kein Base64-Overhead
+        return result.buffer; // ArrayBuffer — no Base64 overhead
     }
 
     async decryptFile(encryptedBuffer, mimeType, key) {

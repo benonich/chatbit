@@ -298,9 +298,7 @@ func (ps *Adapter[U, T]) UnsubscribeNoClose(subID U) error {
 		return fmt.Errorf("not possible to unsubscribe to a closed adapter: %w", ErrAlreadyClosed)
 	}
 
-	if _, ok := ps.subs[subID]; ok {
-		delete(ps.subs, subID)
-	}
+	delete(ps.subs, subID)
 
 	return nil
 }

@@ -16,7 +16,7 @@ type PubSubTestSuite struct {
 	suite.Suite
 	ctrl *gomock.Controller
 
-	sut *pubsub.Adapter
+	sut *pubsub.Adapter[uuid.UUID, uuid.UUID]
 }
 
 func TestPubSubSuite(t *testing.T) {
@@ -26,7 +26,7 @@ func TestPubSubSuite(t *testing.T) {
 func (s *PubSubTestSuite) SetupTest() {
 	s.ctrl = gomock.NewController(s.T())
 
-	s.sut = pubsub.NewAdapter()
+	s.sut = pubsub.NewAdapter[uuid.UUID, uuid.UUID]()
 }
 
 func (s *PubSubTestSuite) TearDownTest() {
@@ -41,8 +41,8 @@ func (s *PubSubTestSuite) Test_PubSub() {
 	wait := make(chan bool, 1)
 
 	// act
-	_, err := s.sut.Subscribe(func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	_, err := s.sut.Subscribe(func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
@@ -63,8 +63,8 @@ func (s *PubSubTestSuite) Test_PubSub_Unsubscribe() {
 	wait := make(chan bool, 1)
 
 	// act
-	subID, err := s.sut.Subscribe(func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	subID, err := s.sut.Subscribe(func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
@@ -96,13 +96,13 @@ func (s *PubSubTestSuite) Test_PubSub_toOneSubscriber() {
 	wait := make(chan bool, 1)
 
 	// act
-	_, err := s.sut.Subscribe(func(obj interface{}) {
+	_, err := s.sut.Subscribe(func(obj uuid.UUID) {
 		s.Require().NoError(errors.New("wrong subscriber"))
 	})
 	s.NoError(err)
 
-	subID, err := s.sut.Subscribe(func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	subID, err := s.sut.Subscribe(func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
@@ -123,8 +123,8 @@ func (s *PubSubTestSuite) Test_PubSub_afterClose() {
 	wait := make(chan bool, 1)
 
 	// act
-	subID, err := s.sut.Subscribe(func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	subID, err := s.sut.Subscribe(func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})

@@ -1,6 +1,7 @@
-// This is a class for handling push notifications
 import {Events} from "./event.js";
 
+// Web push: once the WebSocket is ready it asks for notification permission, subscribes
+// with the server VAPID key and sends the subscription to the server (Events.WS.SUBSCRIBE_PUSH).
 export class Push {
     constructor(events) {
         this._events = events;
@@ -44,7 +45,7 @@ export class Push {
 
         let subscriptionOptions = {
             userVisibleOnly: true,
-            applicationServerKey: this.urlBase64ToUint8Array(vapidPublicKey)
+            applicationServerKey: this.urlBase64ToUint8Array(this._vapidPublicKey())
         };
 
         try {
@@ -96,6 +97,13 @@ export class Push {
         } else {
             return true;
         }
+    }
+
+    // The server renders its VAPID public key into <meta name="vapid-public-key"> of index.html.
+    _vapidPublicKey() {
+        const key = document.querySelector('meta[name="vapid-public-key"]')?.content;
+        if (!key) throw new Error('VAPID public key is missing in index.html');
+        return key;
     }
 
     urlBase64ToUint8Array(base64String) {

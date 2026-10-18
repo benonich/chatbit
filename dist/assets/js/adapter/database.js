@@ -9,6 +9,8 @@ import {Profile} from "../domain/profile.js";
 import {Room} from "../domain/room.js";
 import {Message} from "../domain/message.js";
 
+// IndexedDB storage (via Dexie) for profile, rooms, messages and files.
+// Messages and files received over the WebSocket are stored automatically.
 export class DatabaseAdapter {
 
     constructor(aes, events) {
@@ -59,16 +61,9 @@ export class DatabaseAdapter {
         return await this.db.file.get(fileId);
     }
 
-    async updateMessage(msg) {
-        await this.db.message.add(msg.id, msg);
-    }
-
+    // put instead of add: a message delivered twice (e.g. after a reconnect) just overwrites itself
     async addMessage(msg) {
-        await this.db.message.add(msg);
-    }
-
-    async getMessage(id) {
-        return this.db.message.where({id: id});
+        await this.db.message.put(msg);
     }
 
     async getLatestTimestamp() {
@@ -131,7 +126,6 @@ export class DatabaseAdapter {
 
         return roomsArray;
     }
-
 
     // --- Cleanup ---
 

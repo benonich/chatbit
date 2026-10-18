@@ -1,5 +1,7 @@
 import {Events} from "./event.js";
 
+// Single page navigation: on Events.CHANGE.PAGE it loads assets/view/<page>_header.html and
+// <page>_content.html into the layout and then emits Events.STATE.PAGE so the view can render.
 export class Page {
     constructor(events) {
         this._events = events;
@@ -26,37 +28,6 @@ export class Page {
 
         this._events.emit(Events.STATE.PAGE, pageName);
     }
-
-    async _OLDsetPage(pageName){
-        window.history.pushState({}, "", "/"+pageName);
-
-        console.log("Set actual page to " + pageName);
-
-        const response = await fetch("assets/view/" + pageName + ".html");
-        const htmlString = await response.text()
-
-        document.getElementById('appContent').innerHTML = htmlString;
-
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(htmlString, 'text/html');
-
-        const contentDiv = doc.getElementById('appContent');
-        const headerDiv = doc.getElementById('appHeader');
-
-        document.getElementById('appContent').innerHTML = contentDiv.innerHTML;
-        document.getElementById('appHeader').innerHTML = headerDiv.innerHTML;
-
-        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-
-        this._events.emit(Events.STATE.PAGE, pageName);
-    }
-
-    getPage(){
-        return window.location.pathname.slice(1)
-    }
-
-
-
 
 }
 

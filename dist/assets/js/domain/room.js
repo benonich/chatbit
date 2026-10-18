@@ -1,4 +1,4 @@
-// domain/Room.js
+// domain/room.js
 // Represents a chat room — always holds decrypted name
 // key stays encrypted (only KeyStore ever decrypts it)
 
@@ -47,15 +47,4 @@ export class Room {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
-
-    get ttlFormatted() {
-        if (!this.ttl) return 'Never';
-        if (this.ttl >= 86400) return `${this.ttl / 86400}d`;
-        if (this.ttl >= 3600)  return `${this.ttl / 3600}h`;
-        return `${this.ttl / 60}min`;
-    }
-
-    _escapeHtml(str) {
-        return $('<div>').text(str).html();
-    }
 }

@@ -1,5 +1,6 @@
 import {Events} from "./event.js";
 
+// Opens and closes Bootstrap modals in response to Events.MODAL.OPEN / CLOSE (body: modal id).
 export class Modal {
     constructor(events) {
         this._events = events;

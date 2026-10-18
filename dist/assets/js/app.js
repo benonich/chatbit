@@ -12,6 +12,8 @@ import {Modal} from "./adapter/modal.js";
 import {Notification} from "./adapter/notification.js";
 import {Push} from "./adapter/push.js";
 
+// Composition root: creates all adapters and views, wires them to one shared
+// EventBus and decides which page is shown on startup (login, lock or home).
 export class App {
     constructor() {
         this.events = new EventBus();
@@ -60,12 +62,11 @@ export class App {
             this.events.emit(btn.dataset.action, btn.dataset.body);
         })
 
-        // Globaler Change-Listener
+        // Global change listener: forwards every element with a data-change attribute to the event bus
         document.addEventListener("change", (e) => {
             const target = e.target.closest("[data-change]");
             if (!target) return;
 
-            // Übergabe des Elements oder relevanter Daten an den EventBus
             this.events.emit(target.dataset.change, target);
         });
     }

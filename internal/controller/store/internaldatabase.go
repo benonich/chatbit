@@ -72,10 +72,7 @@ func (aI *AdapterInternal[T]) Update(ID []byte, fn func(obj T) error) error {
 		return err
 	}
 
-	if &obj == nil {
-		return aI.delete(ID)
-	}
-
+	// To remove an object use Delete — fn can not delete it.
 	return aI.add(obj)
 }
 

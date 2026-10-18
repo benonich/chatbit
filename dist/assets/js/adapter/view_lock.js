@@ -1,6 +1,7 @@
 import {Events} from "./event.js";
 import {Pages} from "./page.js";
 
+// Lock screen: shows the alias and unlocks the key store with the password.
 export class ViewLock {
     constructor(events, keyStore, db) {
         this._events = events;

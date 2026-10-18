@@ -12,6 +12,7 @@ const (
 	PrefixChat = uint16(1)
 )
 
+//nolint:unused // key prefixes reserved for the database layout
 var (
 	prefixRoom = ConvertUint16ToByte(PrefixRoom)
 	prefixChat = ConvertUint16ToByte(PrefixChat)

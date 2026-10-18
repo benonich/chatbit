@@ -1,5 +1,6 @@
 // domain/file.js
-// Represents a single chat message — always holds decrypted values
+// Represents a file/image that is transferred in chunks over the WebSocket.
+// blob holds the (encrypted) file content; the matching Message references it by id.
 // Encryption/decryption is handled by the adapter layer, not here
 
 export class File {
@@ -20,7 +21,7 @@ export class File {
     }
 
     // -------------------------------------------------------------------------
-    // Factories — JSON → Message
+    // Factories — JSON → File
     // -------------------------------------------------------------------------
 
     // From a decrypted DB row or decrypted WS payload

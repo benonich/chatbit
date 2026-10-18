@@ -762,14 +762,14 @@ button:hover, button:active, button:focus {
   background: rgba(255, 255, 255, 0.1);
 }
 
-/* Standardmäßig ausgeblendet */
+/* Hidden by default */
 #ct_edit_room_ttl_row {
   display: none !important;
 }
 
-/* Wenn die Checkbox innerhalb der Liste gecheckt ist -> anzeigen */
+/* Show it when the checkbox inside the list is checked */
 ul:has(#ct_edit_room_store:checked) #ct_edit_room_ttl_row {
-  display: flex !important; /* oder block / row */
+  display: flex !important; /* or block / row */
 }
 
 .action-group {

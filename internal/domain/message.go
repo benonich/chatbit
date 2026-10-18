@@ -40,10 +40,12 @@ type UUID string
 
 func (u *UUID) UnmarshalJSON(b []byte) error {
 	var s string
-	if err := json.Unmarshal(b, &s); err != nil {
+	err := json.Unmarshal(b, &s)
+	if err != nil {
 		return err
 	}
-	if _, err := uuid.Parse(s); err != nil {
+	_, err = uuid.Parse(s)
+	if err != nil {
 		return fmt.Errorf("invalid uuid: %w", err)
 	}
 	*u = UUID(s)

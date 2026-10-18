@@ -7,7 +7,9 @@ import (
 	"github.com/google/uuid"
 )
 
-var FileDir = "/Users/benoni/code/benoni/chatbit/files"
+// FileDir is the directory for uploaded (encrypted) files, one subdirectory per room.
+// Relative to the working directory; overridden by the IMAGE_TMP_DIR environment variable.
+var FileDir = "files"
 
 type File struct {
 	Message

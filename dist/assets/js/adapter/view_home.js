@@ -3,7 +3,9 @@ import {Pages} from "./page.js";
 import {Room} from "../domain/room.js";
 import {Notifications} from "./notification.js";
 import {Modals} from "./modal.js";
+import {InviteCode, InviteError} from "./invite.js";
 
+// Home page: room list, creating new rooms and joining rooms via invite code or QR code.
 class ViewHome {
     constructor(events, aes, keyStore, db, qrScanner) {
         this._events = events;
@@ -11,12 +13,16 @@ class ViewHome {
         this._aes = aes;   // AESAdapter instance
         this._keyStore = keyStore;
         this._qrScanner = qrScanner;
+        this._invite = new InviteCode(aes);
     }
 
     init() {
         console.log("View Home init");
 
         this._events.on(Events.STATE.PAGE, async (pageName) => {
+            // Safety net: never keep the camera running after the page changed
+            this._qrScanner.Stop();
+
             if (pageName === Pages.HOME) {
                 console.log("View Home Page");
 
@@ -31,7 +37,8 @@ class ViewHome {
 
         this._events.on(Events.ROOM.JOIN_ROOM_MODAL, async (msg) => {
             console.log("Join Room Modal");
-            this._qrScanner.Start();
+            // The scanner starts the camera when the modal is shown and stops it when it is hidden
+            this._qrScanner.Start((code) => this._joinRoomByScan(code));
             this._events.emit(Events.MODAL.OPEN, Modals.HOME.JOIN_ROOM);
 
         });
@@ -50,72 +57,65 @@ class ViewHome {
         });
     }
 
-    async _subscribeToRooms(){
-
-    }
-
     async _joinRoomByPaste() {
         const modalEl = document.getElementById(Modals.HOME.JOIN_ROOM);
 
         const inviteCodeField = modalEl.querySelector('textarea[name="invite_code"]');
         const inviteCodePinField = modalEl.querySelector('input[name="invite_code_pin"]');
 
-        const raw = inviteCodeField.value.trim();
-        if (!raw) return;
+        const code = inviteCodeField.value.trim();
+        if (!code) return;
 
-        const binString = atob(raw);
-        const bytes = Uint8Array.from(binString, c => c.charCodeAt(0));
-        const joinRoomJson = new TextDecoder().decode(bytes);
-
-        let payload;
-        try {
-            const obj = JSON.parse(joinRoomJson);
-            if (obj.v === 1 && obj.enc) {
-                const pin = inviteCodePinField.value;
-                if (!pin) {
-                    this._events.emit(Notifications.WARNING, {
-                        header: "The Join string is encrypted",
-                        msg: "Please enter the PIN to encrypt the join string",
-                    });
-                    return;
-                }
-                try {
-                    console.log("Decrypting join string with PIN:", pin);
-                    payload = await this._aes.decryptByPIN(obj.data, pin);
-                } catch {
-                    this._events.emit(Notifications.DANGER, {
-                        header: "The Join string is encrypted",
-                        msg: "The PIN is not correct for this join string",
-                    });
-                    return;
-                }
-            } else if (obj.v === 1 && !obj.enc) {
-                payload = obj.data;
-            } else {
-                this._events.emit(Notifications.DANGER, {
-                    header: "The version of the invite code is not known",
-                    msg: "Please enter a valid invite code",
-                });
-                return;
-            }
-        } catch {
-            this._events.emit(Notifications.DANGER, {
-                header: "The Join string is not valid",
-                msg: "Please enter a valid join string",
-            });
-            return;
-        }
+        const invite = await this._decodeInvite(code, inviteCodePinField.value);
+        if (!invite) return;
 
         inviteCodeField.value = "";
         inviteCodePinField.value = "";
 
-        console.log("Joining room: " + payload);
-
-        await this._joinRoom(payload);
+        await this._joinRoom(invite);
     }
 
-    async _joinRoom(rawValue) {
-        let roomObj = JSON.parse(rawValue);
+    // A scanned QR code. A PIN protected code is put into the invite code field,
+    // so the user only has to enter the PIN and press "Join by Code".
+    async _joinRoomByScan(code) {
+        if (this._invite.needsPin(code)) {
+            const modalEl = document.getElementById(Modals.HOME.JOIN_ROOM);
+            modalEl.querySelector('textarea[name="invite_code"]').value = code;
+            modalEl.querySelector('input[name="invite_code_pin"]').focus();
+            this._events.emit(Notifications.WARNING, {
+                header: "The invite code is protected",
+                msg: "Please enter the PIN and press Join by Code",
+            });
+            return;
+        }
+
+        const invite = await this._decodeInvite(code, "");
+        if (invite) await this._joinRoom(invite);
+    }
+
+    // Returns {i, n, k} or null after showing what is wrong with the code.
+    async _decodeInvite(code, pin) {
+        try {
+            return await this._invite.decode(code, pin);
+        } catch (err) {
+            if (err instanceof InviteError && err.reason === "pin") {
+                this._events.emit(Notifications.WARNING, {
+                    header: "The invite code is protected",
+                    msg: pin ? "The PIN is not correct for this invite code" : "Please enter the PIN of the invite code",
+                });
+            } else {
+                console.error("Invalid invite code:", err);
+                this._events.emit(Notifications.DANGER, {
+                    header: "The invite code is not valid",
+                    msg: "Please use the invite code or QR code of a ChatBit room",
+                });
+            }
+            return null;
+        }
+    }
+
+    // invite: {i: roomId, n: roomName, k: base64 room key}
+    async _joinRoom(roomObj) {
 
         const joinRoom = new Room({
             id: roomObj.i,
@@ -128,13 +128,39 @@ class ViewHome {
 
         try {
             await this._db.addRoom(joinRoom);
-
-            this._events.emit(Events.ROOM.OPEN_ROOM, joinRoom.id);
             this._events.emit(Events.WS.JOIN_ROOM, {id: joinRoom.id, notification: true});
-            this._events.emit(Events.MODAL.CLOSE, Modals.HOME.JOIN_ROOM);
         } catch (err) {
-            console.log("ERROR: " + err);
+            // Room was joined before — just open it
+            if (err.name !== "ConstraintError") {
+                console.error("Failed to join room:", err);
+                return;
+            }
         }
+
+        // Close the modal completely before switching the page: the page change replaces the
+        // modal HTML, and if that happens during the fade out, "hidden.bs.modal" never fires,
+        // the camera keeps running and the backdrop stays.
+        this._qrScanner.Stop();
+        await this._closeJoinModal();
+
+        this._events.emit(Events.ROOM.OPEN_ROOM, joinRoom.id);
+    }
+
+    // Hides the join modal and resolves once the fade out is finished.
+    _closeJoinModal() {
+        const modalEl = document.getElementById(Modals.HOME.JOIN_ROOM);
+        if (!modalEl || !modalEl.classList.contains("show")) return Promise.resolve();
+
+        return new Promise(resolve => {
+            // Fallback in case the event never fires
+            const timer = setTimeout(resolve, 1000);
+            modalEl.addEventListener("hidden.bs.modal", () => {
+                clearTimeout(timer);
+                resolve();
+            }, { once: true });
+
+            this._events.emit(Events.MODAL.CLOSE, Modals.HOME.JOIN_ROOM);
+        });
     }
 
     async addRoom() {

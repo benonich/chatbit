@@ -4,18 +4,44 @@ import {File} from "../domain/file.js";
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
 
-// Pure transport layer — no decryption, no DB, no business logic.
-// Emits raw events; a higher layer (App / chat-handler) processes them.
+// Reconnect backoff: starts at RECONNECT_DELAY_MIN and doubles up to RECONNECT_DELAY_MAX.
+const RECONNECT_DELAY_MIN = 1000;
+const RECONNECT_DELAY_MAX = 30000;
+
+// How often a failed file upload is retried after a reconnect.
+const FILE_UPLOAD_ATTEMPTS = 3;
+
+// Pure transport layer — no decryption, no DB writes, no business logic.
+// Emits raw events; a higher layer (views / database adapter) processes them.
+//
+// The connection is opened after the profile is unlocked and is kept alive
+// automatically: on every close it reconnects with exponential backoff, and
+// it reconnects immediately when the browser comes back online or the app
+// becomes visible again. After every (re)connect all rooms are joined again
+// and messages missed while offline are fetched via lastConnectionTime.
 //
 // Events emitted:
-//   ws:connected                — socket opened (subscribe to send join_rooms)
-//   ws:message       (item)     — raw encrypted message payload from server
-//   ws:file_done     ({id, roomId, mimeType, timestamp, buffer}) — assembled binary transfer
+//   Events.WS.CONNECTED                — socket opened and rooms joined (every reconnect)
+//   Events.WS.READY                    — first successful connection after unlock
+//   Events.WS.RECEIVED_MESSAGE (Message) — message received from the server
+//   Events.WS.RECEIVED_FILE    (File)    — assembled binary transfer
 export class WebSocketAdapter {
     constructor(events, db) {
         this.conn = null;
         this._events = events;
         this._db = db;
+
+        // Connection state
+        this._profile = null;
+        this._ready = false;
+        this._reconnectDelay = RECONNECT_DELAY_MIN;
+        this._reconnectTimer = null;
+        this._openWaiters = [];
+
+        // Text frames that were sent while the socket was not open
+        this._outbox = [];
+
+        // File transfer state
         this._pendingAck = null;
         this._bufferedAcks = new Map();
         this._incomingTransfers = new Map();
@@ -26,44 +52,36 @@ export class WebSocketAdapter {
         return `${protocol}${document.location.host}/ws`;
     }
 
-    handler = async (profile) => {
-        console.log("WS Connection starting...");
-
-        await this.initWS(profile);
+    // Opens the connection once the profile is unlocked (only the first unlock counts).
+    handler = (profile) => {
         this._events.off(Events.STATE.UNLOCK, this.handler);
 
-
-        const rooms = await this._db.getRooms();
-        const allRooms = rooms.map(r => ({id: r.id, notification: r.push_notifications}));
-        const lastTimeStamp = await this._db.getLatestTimestamp();
-
-        this.joinRooms({
-            rooms: allRooms,
-            lastConnectionTime: lastTimeStamp,
-        });
-
-        this._events.emit(Events.WS.READY);
+        console.log("WS connection starting...");
+        this._profile = profile;
+        this._watchNetwork();
+        this._connect();
     };
 
     init() {
         this._events.on(Events.STATE.UNLOCK, this.handler);
 
         this._events.on(Events.WS.SEND_FILE, async (msg) => {
-            this.transferStart(msg)
-            await this.sendFile(msg);
+            await this._uploadFile(msg);
         });
 
         this._events.on(Events.WS.SEND_MESSAGE, async (msg) => {
             this.sendMessage(msg);
         });
 
-        this._events.on(Events.WS.JOIN_ROOM, async (roomId) => {
+        // body: {id, notification}
+        this._events.on(Events.WS.JOIN_ROOM, async (room) => {
             this.joinRooms({
-                rooms: [roomId],
-                last_connection_time: 0,
+                rooms: [room],
+                lastConnectionTime: 0,
             });
         });
 
+        // body: room id
         this._events.on(Events.WS.LEAVE_ROOM, async (roomId) => {
             this.leaveRooms({rooms: [roomId]});
         });
@@ -72,56 +90,138 @@ export class WebSocketAdapter {
             this.transferRequest(msg);
         });
 
-
         this._events.on(Events.WS.SUBSCRIBE_PUSH, async (subPush) => {
             this.subscribePush(subPush);
         });
     }
 
-    initWS(profile) {
-        if (this.conn !== null && this.conn.readyState === WebSocket.OPEN) return;
+    // -------------------------------------------------------------------------
+    // Connection handling
+    // -------------------------------------------------------------------------
 
-        return new Promise(async (resolve, reject) => {
-            if (!window["WebSocket"]) {
-                reject(new Error("WebSockets not supported"));
+    isOpen() {
+        return this.conn !== null && this.conn.readyState === WebSocket.OPEN;
+    }
+
+    // Resolves as soon as the socket is open (immediately if it already is).
+    _whenOpen() {
+        if (this.isOpen()) return Promise.resolve();
+        return new Promise(resolve => this._openWaiters.push(resolve));
+    }
+
+    _connect() {
+        if (!window["WebSocket"]) {
+            console.error("WebSockets not supported");
+            return;
+        }
+
+        // Already open or a connection attempt is in progress
+        if (this.conn !== null &&
+            (this.conn.readyState === WebSocket.OPEN || this.conn.readyState === WebSocket.CONNECTING)) {
+            return;
+        }
+
+        clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = null;
+
+        const conn = new WebSocket(this._getEndpoint() + "?client_uid=" + this._profile.clientId);
+        conn.binaryType = "arraybuffer";
+        this.conn = conn;
+
+        conn.onopen = () => this._onOpen();
+
+        conn.onmessage = (e) => {
+            if (e.data instanceof ArrayBuffer) {
+                this._handleIncomingChunk(e.data);
                 return;
             }
-
-            this.conn = new WebSocket(this._getEndpoint() + "?client_uid=" + profile.clientId);
-            this.conn.binaryType = "arraybuffer";
-
-            this.conn.onclose = async (evt) => {
-                console.log("WS Connection closed", evt);
-                await new Promise(r => setTimeout(r, 1000));
-                console.log("Reconnecting WS");
-                await this.initWS();
-            };
-
-            this.conn.onmessage = (e) => {
-                if (e.data instanceof ArrayBuffer) {
-                    this._handleIncomingChunk(e.data);
-                    return;
+            for (const text of e.data.split('\n')) {
+                if (!text.trim()) continue;
+                try {
+                    this._handleIncomingMessage(JSON.parse(text));
+                } catch (err) {
+                    console.error("Failed to parse WS message:", text, err);
                 }
-                for (const text of e.data.split('\n')) {
-                    if (!text.trim()) continue;
-                    try {
-                        this._handleIncomingMessage(JSON.parse(text));
-                    } catch (err) {
-                        console.error("Failed to parse WS message:", text, err);
-                    }
-                }
-            };
+            }
+        };
 
-            this.conn.onopen = () => {
-                console.log("WS Connection connected");
-                this._events.emit('ws:connected');
-                resolve();
-            };
+        // The browser always fires "close" after "error", so reconnecting is handled there.
+        conn.onerror = (err) => {
+            console.warn("WS connection error:", err);
+        };
 
-            this.conn.onerror = (err) => {
-                console.log("WS Connection error:", err.message);
-                reject(err);
-            };
+        conn.onclose = (evt) => {
+            // Ignore close events of an old socket that was already replaced
+            if (this.conn !== conn) return;
+
+            console.log("WS connection closed", evt.code, evt.reason);
+            this._failTransfers();
+            this._scheduleReconnect();
+        };
+    }
+
+    async _onOpen() {
+        console.log("WS connection connected");
+        this._reconnectDelay = RECONNECT_DELAY_MIN;
+
+        // The server forgets all subscriptions when the socket closes,
+        // so all rooms have to be joined again after every reconnect.
+        try {
+            await this._joinAllRooms();
+        } catch (err) {
+            console.error("Failed to join rooms:", err);
+        }
+
+        this._flushOutbox();
+
+        this._openWaiters.splice(0).forEach(resolve => resolve());
+        this._events.emit(Events.WS.CONNECTED);
+
+        if (!this._ready) {
+            this._ready = true;
+            this._events.emit(Events.WS.READY);
+        }
+    }
+
+    // Joins all locally stored rooms and requests every message newer than the last one we have.
+    async _joinAllRooms() {
+        const rooms = await this._db.getRooms();
+        const lastTimeStamp = await this._db.getLatestTimestamp();
+
+        this.joinRooms({
+            rooms: rooms.map(r => ({id: r.id, notification: r.push_notifications})),
+            lastConnectionTime: lastTimeStamp,
+        });
+    }
+
+    _scheduleReconnect() {
+        if (this._reconnectTimer !== null) return;
+
+        const delay = this._reconnectDelay;
+        this._reconnectDelay = Math.min(this._reconnectDelay * 2, RECONNECT_DELAY_MAX);
+
+        console.log(`WS reconnecting in ${delay}ms`);
+        this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this._connect();
+        }, delay);
+    }
+
+    // Skips the backoff and reconnects right away (e.g. network is back).
+    _reconnectNow() {
+        if (this._profile === null || this.isOpen()) return;
+
+        this._reconnectDelay = RECONNECT_DELAY_MIN;
+        this._connect();
+    }
+
+    // Mobile browsers suspend background tabs and drop the socket, so reconnect
+    // as soon as the network is back or the app is visible again.
+    _watchNetwork() {
+        window.addEventListener("online", () => this._reconnectNow());
+
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") this._reconnectNow();
         });
     }
 
@@ -129,34 +229,47 @@ export class WebSocketAdapter {
     // Outgoing messages
     // -------------------------------------------------------------------------
 
-    send(type, msg) {
-        this.conn.send(JSON.stringify({type, data: msg}));
+    // Sends a text frame, or queues it until the socket is open again.
+    _sendText(type, data) {
+        const frame = JSON.stringify({type, data});
+
+        if (this.isOpen()) {
+            this.conn.send(frame);
+        } else {
+            this._outbox.push(frame);
+        }
+    }
+
+    _flushOutbox() {
+        for (const frame of this._outbox.splice(0)) {
+            this.conn.send(frame);
+        }
     }
 
     sendMessage(msg) {
-        this.conn.send(JSON.stringify({type: "message", data: msg}));
+        this._sendText("message", msg);
     }
 
     joinRooms(msg) {
-        this.conn.send(JSON.stringify({type: "join_rooms", data: msg}));
+        this._sendText("join_rooms", msg);
     }
 
     leaveRooms(msg) {
-        this.conn.send(JSON.stringify({type: "leave_rooms", data: msg}));
+        this._sendText("leave_rooms", msg);
     }
 
     subscribePush(msg) {
-        this.conn.send(JSON.stringify({type: "sub_push", data: msg}));
+        this._sendText("sub_push", msg);
     }
 
     // request image or data from server
     transferRequest(msg) {
-        this.conn.send(JSON.stringify({type: "transfer_request", data: msg}));
+        this._sendText("transfer_request", msg);
     }
 
     // start to send image or data to server
     transferStart(msg) {
-        this.conn.send(JSON.stringify({type: "transfer_start", data: msg}));
+        this._sendText("transfer_start", msg);
     }
 
     // -------------------------------------------------------------------------
@@ -200,7 +313,7 @@ export class WebSocketAdapter {
         this._incomingTransfers.set(id, {
             roomId, mimeType, timestamp,
             chunks: new Array(chunksTotal).fill(null),
-            chunksSize: chunkSize,
+            chunkSize,
             received: 0,
             chunksTotal,
         });
@@ -224,7 +337,7 @@ export class WebSocketAdapter {
         t.received++;
     }
 
-    // Assembles chunks into a single buffer and emits ws:file_done.
+    // Assembles chunks into a single buffer and emits Events.WS.RECEIVED_FILE.
     // No DB access — the consumer saves the file.
     _assembleTransfer(fileId) {
         const t = this._incomingTransfers.get(fileId);
@@ -261,14 +374,37 @@ export class WebSocketAdapter {
     // Outgoing binary transfer
     // -------------------------------------------------------------------------
 
+    // Uploads a file; if the connection drops during the upload it waits for the
+    // reconnect and starts the upload again from the first chunk.
+    async _uploadFile(msg) {
+        for (let attempt = 1; attempt <= FILE_UPLOAD_ATTEMPTS; attempt++) {
+            await this._whenOpen();
+            try {
+                this.transferStart(msg);
+                await this.sendFile(msg);
+                return;
+            } catch (err) {
+                console.warn(`File upload ${msg.id} failed (attempt ${attempt}/${FILE_UPLOAD_ATTEMPTS}):`, err.message);
+            }
+        }
+        console.error(`File upload ${msg.id} failed, giving up`);
+    }
+
+    // Sends all chunks; each chunk is only sent after the server acknowledged the previous one.
     async sendFile(msg) {
         for (let i = 0; i < msg.chunksTotal; i++) {
             await this.waitForAck(msg.id, i);
             const chunk = msg.blob.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
             const header = this._encodeChunkHeader(msg.id, i);
-            this.conn.send(this._concat(header, chunk));
+            this._sendBinary(this._concat(header, chunk));
         }
-        this.conn.send(JSON.stringify({type: 'transfer_done', data: {id: msg.id}}));
+        this._sendBinary(JSON.stringify({type: 'transfer_done', data: {id: msg.id}}));
+    }
+
+    // Binary transfers can not be queued — the server keeps the transfer state per connection.
+    _sendBinary(data) {
+        if (!this.isOpen()) throw new Error("WS connection is not open");
+        this.conn.send(data);
     }
 
     _encodeChunkHeader(id, index) {
@@ -285,15 +421,6 @@ export class WebSocketAdapter {
         tmp.set(new Uint8Array(a), 0);
         tmp.set(new Uint8Array(b), a.byteLength);
         return tmp.buffer;
-    }
-
-    // Keep old public names for callers that use them directly
-    encodeChunkHeader(id, index) {
-        return this._encodeChunkHeader(id, index);
-    }
-
-    concat(a, b) {
-        return this._concat(a, b);
     }
 
     // -------------------------------------------------------------------------
@@ -317,20 +444,19 @@ export class WebSocketAdapter {
             this._bufferedAcks.delete(key);
             return Promise.resolve();
         }
-        return new Promise(resolve => {
-            this._pendingAck = {id, chunkIndex, resolve};
+        return new Promise((resolve, reject) => {
+            this._pendingAck = {id, chunkIndex, resolve, reject};
         });
     }
-}
 
-// -------------------------------------------------------------------------
-// Global helpers — thin wrappers so existing call sites keep working
-// -------------------------------------------------------------------------
-
-function joinRooms(room_id, notification) {
-    ws.joinRooms({rooms: [{id: room_id, notification: notification}]});
-}
-
-function leaveRoom(room_id) {
-    ws.leaveRooms({rooms: [room_id]});
+    // Called when the socket closes: transfers are bound to the connection on the
+    // server, so a running upload is aborted and partial downloads are dropped.
+    _failTransfers() {
+        if (this._pendingAck) {
+            this._pendingAck.reject(new Error("WS connection closed"));
+            this._pendingAck = null;
+        }
+        this._bufferedAcks.clear();
+        this._incomingTransfers.clear();
+    }
 }

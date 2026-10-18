@@ -13,7 +13,7 @@ import (
 type PubSubTopicTestSuite struct {
 	suite.Suite
 
-	sut *pubsub.AdapterTopic
+	sut *pubsub.AdapterTopic[uuid.UUID, uuid.UUID]
 }
 
 func TestPubSubTopicSuite(t *testing.T) {
@@ -21,7 +21,7 @@ func TestPubSubTopicSuite(t *testing.T) {
 }
 
 func (s *PubSubTopicTestSuite) SetupTest() {
-	s.sut = pubsub.NewAdapterTopic()
+	s.sut = pubsub.NewAdapterTopic[uuid.UUID, uuid.UUID]()
 }
 
 func (s *PubSubTopicTestSuite) TearDownTest() {}
@@ -35,13 +35,14 @@ func (s *PubSubTopicTestSuite) TestPubSubTopic() {
 	wait := make(chan bool, 1)
 
 	// act
-	s.sut.Subscribe(someTopic.String(), func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	_, err := s.sut.Subscribe(someTopic, func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
+	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic, someInput))
 
 	<-wait
 
@@ -57,14 +58,14 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicUnsubscribe() {
 	wait := make(chan bool, 1)
 
 	// act
-	subID, err := s.sut.Subscribe(someTopic.String(), func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	subID, err := s.sut.Subscribe(someTopic, func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
 	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic, someInput))
 
 	select {
 	case <-wait:
@@ -73,7 +74,7 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicUnsubscribe() {
 		s.Require().NoError(errors.New("no subscribe trigger received"))
 	}
 
-	s.NoError(s.sut.Unsubscribe(someTopic.String(), subID))
+	s.NoError(s.sut.UnsubscribeFromTopic(someTopic, subID))
 
 	select {
 	case <-wait:
@@ -92,19 +93,19 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicDifferentTopics() {
 	wait := make(chan bool, 1)
 
 	// act
-	_, err := s.sut.Subscribe(someTopic1.String(), func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	_, err := s.sut.Subscribe(someTopic1, func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
 	s.NoError(err)
 
-	_, err = s.sut.Subscribe(someTopic2.String(), func(obj interface{}) {
+	_, err = s.sut.Subscribe(someTopic2, func(obj uuid.UUID) {
 		s.Require().NoError(errors.New("wrong topic"))
 	})
 	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic1.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic1, someInput))
 
 	<-wait
 
@@ -122,22 +123,22 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicDifferentTopicsSameSub() {
 	wait := make(chan bool, 1)
 
 	// act
-	subID, err := s.sut.Subscribe(someTopic1.String(), func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	subID, err := s.sut.Subscribe(someTopic1, func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
 	s.NoError(err)
 
-	err = s.sut.AddSubscriberToTopic(someTopic2.String(), subID)
+	err = s.sut.AddSubscriberToTopic(someTopic2, subID)
 	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic1.String(), someInput1))
+	s.NoError(s.sut.Publish(someTopic1, someInput1))
 
 	<-wait
 	s.Equal(someInput1, someOutput)
 
-	s.NoError(s.sut.Publish(someTopic2.String(), someInput2))
+	s.NoError(s.sut.Publish(someTopic2, someInput2))
 	<-wait
 	s.Equal(someInput2, someOutput)
 
@@ -152,14 +153,14 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicAfterClose() {
 	wait := make(chan bool, 1)
 
 	// act
-	_, err := s.sut.Subscribe(someTopic.String(), func(obj interface{}) {
-		someOutput = obj.(uuid.UUID)
+	_, err := s.sut.Subscribe(someTopic, func(obj uuid.UUID) {
+		someOutput = obj
 
 		wait <- true
 	})
 	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic, someInput))
 
 	select {
 	case <-wait:
@@ -170,7 +171,7 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicAfterClose() {
 
 	s.NoError(s.sut.Close())
 
-	s.ErrorIs(s.sut.Publish(someTopic.String(), someInput), pubsub.ErrAlreadyClosed)
+	s.ErrorIs(s.sut.Publish(someTopic, someInput), pubsub.ErrAlreadyClosed)
 
 	select {
 	case <-wait:
@@ -185,7 +186,7 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicPublishToNotExistingTopic() {
 	someTopic, _ := uuid.NewUUID()
 
 	// act
-	s.NoError(s.sut.Publish(someTopic.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic, someInput))
 }
 
 func (s *PubSubTopicTestSuite) TestPubSubTopicMultiSubs() {
@@ -198,21 +199,21 @@ func (s *PubSubTopicTestSuite) TestPubSubTopicMultiSubs() {
 	wait2 := make(chan bool, 1)
 
 	// act
-	_, err := s.sut.Subscribe(someTopic.String(), func(obj interface{}) {
-		someOutput1 = obj.(uuid.UUID)
+	_, err := s.sut.Subscribe(someTopic, func(obj uuid.UUID) {
+		someOutput1 = obj
 
 		wait1 <- true
 	})
 	s.NoError(err)
 
-	_, err = s.sut.Subscribe(someTopic.String(), func(obj interface{}) {
-		someOutput2 = obj.(uuid.UUID)
+	_, err = s.sut.Subscribe(someTopic, func(obj uuid.UUID) {
+		someOutput2 = obj
 
 		wait2 <- true
 	})
 	s.NoError(err)
 
-	s.NoError(s.sut.Publish(someTopic.String(), someInput))
+	s.NoError(s.sut.Publish(someTopic, someInput))
 
 	<-wait1
 	<-wait2

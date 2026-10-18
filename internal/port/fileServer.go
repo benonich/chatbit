@@ -2,6 +2,7 @@ package port
 
 import (
 	"bytes"
+	"chatbit/internal/adapter/vapid"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -13,7 +14,7 @@ import (
 const StaticPath = "./dist/"
 
 func (s *Server) StartFileServer(info BuildInfo) {
-	servFile, err := NewFileHandler(os.Getenv("VAPID_PUBLIC_KEY"), info)
+	servFile, err := NewFileHandler(vapid.Keys().PublicKey, info)
 	if err != nil {
 		slog.Error("failed to create file handler", slog.String("error", err.Error()))
 		return
@@ -66,7 +67,8 @@ func renderTemplate(path string, data any) ([]byte, error) {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -77,7 +79,10 @@ func (h *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/service-worker.js" {
 		w.Header().Set("Content-Type", "application/javascript")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write(h.swJS)
+		_, err := w.Write(h.swJS)
+		if err != nil {
+			slog.Debug("not possible to write service worker", slog.String("error", err.Error()))
+		}
 		return
 	}
 
@@ -94,11 +99,18 @@ func (h *fileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
 	default:
+		// no-cache: the browser may keep the file but must revalidate it (cheap 304 via Last-Modified).
+		// Without it browsers cache JS modules heuristically and mix old and new files after a deploy.
+		w.Header().Set("Cache-Control", "no-cache")
 		h.static.ServeHTTP(w, r)
 	}
 }
 
 func (h *fileHandler) serveIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(h.indexHTML)
+	w.Header().Set("Cache-Control", "no-cache")
+	_, err := w.Write(h.indexHTML)
+	if err != nil {
+		slog.Debug("not possible to write index.html", slog.String("error", err.Error()))
+	}
 }

@@ -1,3 +1,5 @@
+// Minimal publish/subscribe bus — all adapters and views talk to each other only through it.
+// Event names are defined in Events below.
 export class EventBus {
     constructor() {
         this._listeners = {};
@@ -10,15 +12,6 @@ export class EventBus {
 
     emit(event, data) {
         console.log("Emit event " + event + " with data " + data);
-        this._listeners[event]?.forEach(cb => cb(data));
-    }
-
-    emitPrefix(event, data) {
-        for (const key of Object.keys(this._listeners)) {
-            if (key.endsWith(':*') && event.startsWith(key.slice(0, -1))) {
-                this._listeners[key].forEach(cb => cb(data));
-            }
-        }
         this._listeners[event]?.forEach(cb => cb(data));
     }
 
@@ -40,7 +33,8 @@ export const Events = {
         JOIN_ROOM: 'ws:join_room',
         LEAVE_ROOM: 'ws:leave_room',
         SUBSCRIBE_PUSH: 'ws:subscribe_push',
-        READY: 'ws:ready' // this event is send if ws ready
+        CONNECTED: 'ws:connected', // emitted after every (re)connect, once all rooms are joined again
+        READY: 'ws:ready' // emitted once after the first successful connection
     },
     CHAT: {
         MESSAGE: 'chat:message',  // todo
@@ -82,6 +76,6 @@ export const Events = {
     // CHANGE.PAGE will just load the Html Pages
     MODAL: {
         OPEN: 'modal:open',  // body: modal_id
-        CLOSE: 'modal:open:',  // body: modal_id
+        CLOSE: 'modal:close',  // body: modal_id
     }
 };

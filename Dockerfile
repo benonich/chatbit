@@ -12,6 +12,10 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG CI_JOB_ID
 ARG CI_COMMIT_TAG
+# Commit and version of the build. The commit names the service worker cache,
+# so without it clients never notice an update (there is no git in the build image).
+ARG COMMIT=""
+ARG VERSION=""
 
 # Set working directory
 WORKDIR /app
@@ -34,7 +38,7 @@ RUN go mod download
 COPY . .
 
 # Build application for target arch
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH task build:app
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH COMMIT=$COMMIT VERSION=$VERSION task build:app
 
 # Runner stage
 FROM $TARGET_BASE_IMAGE

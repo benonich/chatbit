@@ -8,10 +8,11 @@ tasks:
   build:app:
     desc: Build ChatBit
     vars:
+      # COMMIT / VERSION can be passed from outside (Docker build args, CI) where no git is available
       build_hash:
-        sh: echo $(git rev-parse HEAD)
+        sh: echo ${COMMIT:-$(git rev-parse HEAD 2>/dev/null)}
       build_tag:
-        sh: echo $(git tag --points-at HEAD)
+        sh: echo ${VERSION:-$(git tag --points-at HEAD 2>/dev/null)}
       version: '{{.build_tag | default "0.0.0" }}'
       build_ldflags: >-
         -ldflags
@@ -38,7 +39,7 @@ tasks:
         docker buildx build \
           -t registry.benoni.dev/chatbit:0.0.0-dev  \
           --platform="linux/amd64" \
-          --build-arg="TARGET_BASE_IMAGE=alpine:3.23" \
-          --build-arg="BUILD_BASE_IMAGE=golang:1.25-alpine3.23" \
+          --build-arg="TARGET_BASE_IMAGE=alpine:3.24" \
+          --build-arg="BUILD_BASE_IMAGE=golang:1.27-alpine" \
           .
         docker push registry.benoni.dev/chatbit:0.0.0-dev

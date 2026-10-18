@@ -11,25 +11,50 @@ var CACHE_NAME = 'chatbit-v' + CACHE_VERSION;
 // Files
 var ASSETS_TO_CACHE = [
   'index.html',
-  'view/login.html',
-  'view/room.html',
-  'view/lockscreen.html',
-  'view/home.html',
+  'manifest.json',
   'assets/css/style.css',
   'assets/css/inc/bootstrap/bootstrap.min.css',
+  'assets/css/inc/bootstrap/bootstrap-icons.min.css',
+  'assets/css/inc/bootstrap/fonts/bootstrap-icons.woff',
+  'assets/css/inc/bootstrap/fonts/bootstrap-icons.woff2',
   'assets/css/inc/splide/splide.min.css',
-  'assets/js/lib/html5-qrcode-2.3.8.min.js',
-  'assets/js/lib/bootstrap.min.js',
-  'assets/js/lib/dexie.min.js',
   'assets/js/lib/jquery-3.7.0.min.js',
-  'assets/js/lib/jquery-qrcode.min.js',
+  'assets/js/lib/dexie.min.js',
+  'assets/js/lib/qrcode.min.js',
+  'assets/js/lib/zxing/barcode-detector-3.0.8.min.js',
+  'assets/js/lib/zxing/zxing_reader-2.2.4.wasm',
+  'assets/js/lib/bootstrap.min.js',
+  'assets/js/plugins/splide/splide.min.js',
   'assets/js/base.js',
-  'assets/js/database.js',
   'assets/js/index.js',
-  'assets/js/room.js',
-  'assets/js/ws.js',
-  'assets/img/LogoBenoni.svg',
-  'manifest.json'
+  'assets/js/app.js',
+  'assets/js/adapter/aes.js',
+  'assets/js/adapter/database.js',
+  'assets/js/adapter/event.js',
+  'assets/js/adapter/invite.js',
+  'assets/js/adapter/key_store.js',
+  'assets/js/adapter/modal.js',
+  'assets/js/adapter/notification.js',
+  'assets/js/adapter/page.js',
+  'assets/js/adapter/push.js',
+  'assets/js/adapter/scanner.js',
+  'assets/js/adapter/view_home.js',
+  'assets/js/adapter/view_lock.js',
+  'assets/js/adapter/view_room.js',
+  'assets/js/adapter/websocket.js',
+  'assets/js/domain/file.js',
+  'assets/js/domain/message.js',
+  'assets/js/domain/profile.js',
+  'assets/js/domain/room.js',
+  'assets/view/home_content.html',
+  'assets/view/home_header.html',
+  'assets/view/lockscreen_content.html',
+  'assets/view/lockscreen_header.html',
+  'assets/view/login_content.html',
+  'assets/view/login_header.html',
+  'assets/view/room_content.html',
+  'assets/view/room_header.html',
+  'assets/img/LogoBenoni.svg'
 ];
 
 const IGNORED_PATHS = ['/api/', '/ws/'];
@@ -88,7 +113,7 @@ function notifyClients() {
 self.addEventListener('fetch', event => {
     const { request } = event;
 
-    /* 🚫 DEV-MODUS: immer Network */
+    /* 🚫 Dev mode: always use the network */
     if (IS_LOCALHOST) {
         return;
     }
@@ -100,7 +125,7 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    /* 🚫 API-Requests niemals cachen */
+    /* 🚫 Never cache API requests */
     if (IGNORED_PATHS.some(path => url.pathname.startsWith(path))) {
         return;
     }
@@ -187,8 +212,8 @@ self.addEventListener('notificationclick', function (event) {
       badge: '/badge.png',          // Kleines Icon in Statusleiste
       image: '/preview.png',        // Grosses Bild (optional)
       tag: 'message',               // Gruppiert Notifications
-      renotify: true,               // Vibriert auch bei gleichem tag
-      data: { url: data.url }       // Für click-handler
+      renotify: true,               // vibrate again even if the tag is the same
+      data: { url: data.url }       // for the click handler
     })
   );
 });
@@ -201,14 +226,14 @@ self.addEventListener('notificationclick', event => {
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true })
       .then(clientList => {
-        // PWA bereits offen? → fokussieren und navigieren
+        // PWA already open? → focus it and navigate
         for (const client of clientList) {
           if (client.url.includes(self.location.origin)) {
             client.focus();
             return client.navigate(chatUrl);
           }
         }
-        // PWA nicht offen → neues Fenster
+        // PWA not open → open a new window
         return clients.openWindow(chatUrl);
       })
   );
@@ -223,7 +248,7 @@ self.addEventListener("push", (event) => {
     console.log(event.data?.json());
 
 
-    //let data = { title: "Push", body: "Neue Nachricht", url: "/" };
+    //let data = { title: "Push", body: "New message", url: "/" };
     //try { if (event.data) data = { ...data, ...event.data.json() }; } catch { console.error("Push data is not valid JSON")}
     const data = event.data.json();
     event.waitUntil(
@@ -251,7 +276,7 @@ self.addEventListener('notificationclick', (event) => {
             if (clientList.length > 0) {
                 return clientList[0].focus();
             }
-            // Kein Fenster offen — neues öffnen
+            // No window open — open a new one
             return clients.openWindow('/');
         })
     );

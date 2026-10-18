@@ -1,5 +1,9 @@
 import {Profile} from "../domain/profile.js";
 
+// Holds the unlocked key material in memory only:
+//  - the master key, derived from the user password (PBKDF2 via AesAdapter)
+//  - a cache of decrypted room keys (room keys are stored encrypted with the master key)
+// register() creates the profile, unlock() verifies the password by decrypting profile.verify.
 export class KeyStore {
     constructor(aes, db) {
         this._aes       = aes;
@@ -53,8 +57,6 @@ export class KeyStore {
         }
 
         this._masterKey = key;
-
-        console.log(key);
 
         this.uid = profile.uid;
 

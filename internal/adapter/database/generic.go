@@ -31,7 +31,8 @@ func (a *Adapter[T]) DeleteObjectsByPrefix(prefix []byte) error {
 		for itr.Rewind(); itr.Valid(); itr.Next() {
 			item := itr.Item()
 			key := item.KeyCopy(nil)
-			if err := txn.Delete(key); err != nil {
+			err := txn.Delete(key)
+			if err != nil {
 				return err
 			}
 		}

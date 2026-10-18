@@ -1,6 +1,7 @@
-// domain/Room.js
-// Represents a chat room — always holds decrypted name
-// key stays encrypted (only KeyStore ever decrypts it)
+// domain/profile.js
+// The local user profile (there is exactly one, id 0).
+// salt + verify are used by KeyStore to check the password; clientId identifies this
+// device on the WebSocket server.
 
 export class Profile {
 
@@ -14,10 +15,10 @@ export class Profile {
     }
 
     // -------------------------------------------------------------------------
-    // Factories — JSON → Room
+    // Factories — DB row → Profile
     // -------------------------------------------------------------------------
 
-    // From a DB row — adapter decrypts name before calling this
+    // From a DB row
     static fromDB(row) {
         return new Profile({
             id: row.id,
@@ -30,7 +31,7 @@ export class Profile {
     }
 
     // -------------------------------------------------------------------------
-    // Serialization — Room → JSON (adapter encrypts name before storing)
+    // Serialization — Profile → DB row
     // -------------------------------------------------------------------------
 
     toDB() {

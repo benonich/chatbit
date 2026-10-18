@@ -4,15 +4,19 @@ import {Message} from "../domain/message.js";
 import {File} from "../domain/file.js";
 import {Modals} from "./modal.js";
 import {Room} from "../domain/room.js";
+import {InviteCode} from "./invite.js";
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
 
+// Chat room page: renders messages, encrypts and sends text and images, loads images on demand
+// and handles the room actions (share, edit, clean, leave).
 export class ViewRoom {
     constructor(events, aes, keyStore, db) {
         this._events = events;
         this._aes   = aes;
         this._db   = db;
         this._keyStore = keyStore;
+        this._invite = new InviteCode(aes);
 
         this._roomId = null;
         this._roomTimestamp = null;
@@ -78,8 +82,8 @@ export class ViewRoom {
 
                 await this.showImageModal(file);
             } catch (error) {
-                // Fängt sowohl Netzwerk-/Transferfehler als auch Timeouts zentral ab
-                console.error(`Fehler beim Laden der Datei ${fileId}:`, error.message);
+                // Handles network/transfer errors and timeouts in one place
+                console.error(`Failed to load file ${fileId}:`, error.message);
             }
 
         });
@@ -228,45 +232,31 @@ export class ViewRoom {
         }
     }
 
+    // Invite code of the open room, encrypted with the PIN if one is given
+    async _inviteCode(pin) {
+        return this._invite.encode({
+            i: this._roomId,
+            n: this._roomName,
+            k: await this._aes.exportKey(this._roomKey)
+        }, pin);
+    }
+
     async _copySharedRoom(){
         const modalEl = document.getElementById(Modals.ROOM.SHARE_ROOM);
 
         const pinInput = modalEl.querySelector('input[name="share_pin"]');
         const copyBtn = modalEl.querySelector('[data-field="copy_btn"]');
 
-        const pin = pinInput.value;
-        let exportStr;
-
-        const sharePayload = JSON.stringify({
-            i: this._roomId,
-            n: this._roomName,
-            k: await this._aes.exportKey(this._roomKey)
-        });
-
-        if (pin) {
-            const encSharePayload = await this._aes.encryptByPIN(sharePayload, pin);
-            exportStr = JSON.stringify({ v: 1, enc: true, data: encSharePayload });
-        } else {
-            exportStr = JSON.stringify({ v: 1, enc: false, data: sharePayload });
-        }
-
-        const bytes = new TextEncoder().encode(exportStr);
-        const binString = Array.from(bytes, b => String.fromCharCode(b)).join('');
-
-        await navigator.clipboard.writeText(btoa(binString));
+        await navigator.clipboard.writeText(await this._inviteCode(pinInput.value));
 
         const original = copyBtn.innerHTML;
         copyBtn.innerHTML = '<ion-icon name="checkmark-outline"></ion-icon> Copied!';
         setTimeout(() => { copyBtn.innerHTML = original; }, 2000);
     }
 
+    // The QR code contains exactly the invite code that "Copy Code" copies, so it can also be
+    // scanned with the native camera app and pasted into the join dialog.
     async _shareRoom(){
-        const sharePayload = JSON.stringify({
-            i: this._roomId,
-            n: this._roomName,
-            k: await this._aes.exportKey(this._roomKey)
-        });
-
         const modalEl = document.getElementById(Modals.ROOM.SHARE_ROOM);
 
         const qrContainer = modalEl.querySelector('[data-field="qr_code"]');
@@ -274,16 +264,37 @@ export class ViewRoom {
 
         pinInput.value = "";
 
-        qrContainer.innerHTML = "";
+        let renderId = 0;
+        const render = async () => {
+            const id = ++renderId;
+            const code = await this._inviteCode(pinInput.value);
+            if (id !== renderId) return; // a newer render was started while deriving the PIN key
 
-        new QRCode(qrContainer, {
-            text: sharePayload,
-            width: 300,
-            height: 300,
-            colorDark: "#000",
-            colorLight: "#fff",
-            correctLevel: QRCode.CorrectLevel.M
-        });
+            qrContainer.innerHTML = "";
+            new QRCode(qrContainer, {
+                text: code,
+                width: 280,
+                height: 280,
+                colorDark: "#000",
+                colorLight: "#fff",
+                correctLevel: QRCode.CorrectLevel.L // short code + low correction = large modules
+            });
+        };
+
+        // White quiet zone around the code: scanners need it, especially in dark mode
+        qrContainer.style.background = "#fff";
+        qrContainer.style.padding = "16px";
+        qrContainer.style.width = "fit-content";
+        qrContainer.style.margin = "0 auto";
+
+        // Re-render with the PIN, debounced because the PIN key derivation (PBKDF2) is slow
+        let timer = null;
+        pinInput.oninput = () => {
+            clearTimeout(timer);
+            timer = setTimeout(render, 400);
+        };
+
+        await render();
 
         this._events.emit(Events.MODAL.OPEN, Modals.ROOM.SHARE_ROOM);
     }
@@ -359,7 +370,7 @@ export class ViewRoom {
 
 
     async getOrRequestFile(fileId, timeoutMs = 15000) {
-        // 1. Schneller Pfad: Ressource bereits vorhanden (spart Netz- und Event-Overhead)
+        // 1. Fast path: file is already stored locally (saves network and event overhead)
         const cachedFile = await this._db.getFile(fileId);
         if (cachedFile) {
             return cachedFile;
@@ -367,7 +378,7 @@ export class ViewRoom {
 
         console.log(`File is not in DB present requesting file ${fileId}`);
 
-        // 2. Auf Event warten und das Ergebnis als Promise bereitstellen
+        // 2. Wait for the transfer event and expose the result as a promise
         return new Promise((resolve, reject) => {
             let timer = null;
 
@@ -394,13 +405,13 @@ export class ViewRoom {
                 }
             };
 
-            // Timeout verhindert blockierte Prozesse und Speicherlecks
+            // The timeout prevents hanging promises and memory leaks
             timer = setTimeout(() => {
                 cleanup();
-                reject(new Error(`Timeout: Dateiübertragung für '${fileId}' nicht rechtzeitig abgeschlossen.`));
+                reject(new Error(`Timeout: file transfer for '${fileId}' did not finish in time.`));
             }, timeoutMs);
 
-            // Listener registrieren und Anfrage absenden
+            // Register the listener, then send the request
             this._events.on(Events.WS.RECEIVED_FILE, onDone);
             this._events.emit(Events.WS.TRANSFER_REQUEST, { id: fileId, roomId: this._roomId });
         });
@@ -428,7 +439,7 @@ export class ViewRoom {
         const canvas = new OffscreenCanvas(width, height);
         canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
 
-        // HEIC → immer als JPEG ausgeben
+        // HEIC → always convert to JPEG
         const isHEIC = file.type === 'image/heic' ||
             file.type === 'image/heif' ||
             file.name?.toLowerCase().endsWith('.heic') ||

@@ -741,75 +741,6 @@ multiListview.forEach(function (el) {
 
 
 //-----------------------------------------------------------------------
-// Add to Home
-function iosAddtoHome() {
-    var offcanvas = new bootstrap.Offcanvas(document.getElementById('ios-add-to-home-screen'))
-    offcanvas.toggle();
-}
-function androidAddtoHome() {
-    var offcanvas = new bootstrap.Offcanvas(document.getElementById('android-add-to-home-screen'))
-    offcanvas.toggle();
-}
-function AddtoHome(time, once) {
-    if (once) {
-        var AddHomeStatus = localStorage.getItem("ChatbitAddHomeStatus");
-        if (AddHomeStatus === "1" || AddHomeStatus === 1) {
-            // already showed up
-        }
-        else {
-            localStorage.setItem("ChatbitAddHomeStatus", 1)
-            window.addEventListener('load', () => {
-                if (navigator.standalone) {
-                    // if app installed ios home screen
-                }
-                else if (matchMedia('(display-mode: standalone)').matches) {
-                    // if app installed android home screen
-                }
-                else {
-                    // if app is not installed
-                    if (androidDetection) {
-                        setTimeout(() => {
-                            androidAddtoHome()
-                        }, time);
-                    }
-                    if (iosDetection) {
-                        setTimeout(() => {
-                            iosAddtoHome()
-                        }, time);
-                    }
-                }
-            });
-        }
-    }
-    else {
-        window.addEventListener('load', () => {
-            if (navigator.standalone) {
-                // app loaded to ios
-            }
-            else if (matchMedia('(display-mode: standalone)').matches) {
-                // app loaded to android
-            }
-            else {
-                // app not loaded
-                if (androidDetection) {
-                    setTimeout(() => {
-                        androidAddtoHome()
-                    }, time);
-                }
-                if (iosDetection) {
-                    setTimeout(() => {
-                        iosAddtoHome()
-                    }, time);
-                }
-            }
-        });
-    }
-
-}
-//-----------------------------------------------------------------------
-
-
-//-----------------------------------------------------------------------
 // Dark Mode Detection
 var checkDarkModeStatus = localStorage.getItem("ChatbitDarkMode");
 var switchDarkMode = document.querySelectorAll(".dark-mode-switch");
@@ -876,69 +807,12 @@ switchDarkMode.forEach(function (el) {
 
 
 //-----------------------------------------------------------------------
-// Countdown
-function countdownTimer(time) {
-    var end = time;
-    end = new Date(end).getTime();
-    var d, h, m, s;
-    setInterval(() => {
-        let now = new Date().getTime();
-        let r = parseInt((end - now) / 1000);
-        if (r >= 0) {
-            // days
-            d = parseInt(r / 86400);
-            r = (r % 86400);
-            // hours
-            h = parseInt(r / 3600);
-            r = (r % 3600);
-            // minutes
-            m = parseInt(r / 60);
-            r = (r % 60);
-            // seconds
-            s = parseInt(r);
-            d = parseInt(d, 10);
-            h = h < 10 ? "0" + h : h;
-            m = m < 10 ? "0" + m : m;
-            s = s < 10 ? "0" + s : s;
-            document.getElementById("countDown").innerHTML =
-                "<div>" + d + "<span>Days</span></div>"
-                +
-                "<div>" + h + "<span>Hours</span></div>"
-                +
-                "<div>" + m + "<span>Minutes</span></div>"
-                +
-                "<div>" + s + "<span>Seconds</span></div>"
-        } else {
-            document.getElementById("countDown").innerHTML = "<p class='alert alert-outline-warning'>The countdown is over.</p>"
-        }
-    }, 1000);
-}
-//-----------------------------------------------------------------------
-
-
-//-----------------------------------------------------------------------
 // Cookies Box
 if (document.querySelector(".cookies-modal") === null) {
     // Doesn't exist.
 }
 else{
     var elCookies = document.getElementById("cookies-box");
-    var CookiesStatus = localStorage.getItem("ChatbitCookiesStatus");
-    function CookiesBox(time) {
-        if (CookiesStatus === "1" || CookiesStatus === 1) {
-            // Cookies already accepted.
-        }
-        else {
-            if (time) {
-                setTimeout(() => {
-                    elCookies.classList.add("show");
-                }, time);
-            }
-            else {
-                elCookies.classList.add("show");
-            }
-        }
-    }
     document.querySelectorAll(".accept-cookies").forEach(function (el) {
         el.addEventListener("click", function () {
             localStorage.setItem("ChatbitCookiesStatus", "1");

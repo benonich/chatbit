@@ -30,3 +30,12 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# macOS
+.DS_Store
+
+# ChatBit runtime data
+chatbit_db.kv/
+files/
+vapid.json
+artifacts/

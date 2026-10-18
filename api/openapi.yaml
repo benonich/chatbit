@@ -3,8 +3,8 @@ info:
   title: WebRTC Signaling & Messaging API
   version: 1.0.0
   description: >
-    API zum Austausch von WebRTC Offer/Answer, ICE-Kandidaten und
-    Verwaltung von Räumen/Peers für eine PWA Chat-App.
+    API for exchanging WebRTC offers/answers and ICE candidates and for
+    managing rooms/peers of a PWA chat app.
 
 servers:
   - url: https://chatbit.ch/api
@@ -13,7 +13,7 @@ paths:
 
   /rooms/{roomId}/join:
     post:
-      summary: Raum betreten
+      summary: Join a room
       parameters:
         - in: path
           name: roomID
@@ -36,7 +36,7 @@ paths:
 
   /rooms/{roomId}/leave:
     post:
-      summary: Raum betreten
+      summary: Leave a room
       parameters:
         - in: path
           name: roomID
@@ -123,7 +123,7 @@ paths:
           description: Candidate weitergeleitet
 
     post:
-      summary: Eine Chat-Nachricht speichern (optional, da WebRTC sie eigentlich direkt sendet)
+      summary: Store a chat message (optional, WebRTC normally sends it directly)
       parameters:
         - in: path
           name: roomId

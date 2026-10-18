@@ -1,5 +1,8 @@
 import {Events} from "./event.js";
 
+// Shows in-app notification banners at the top of the page.
+// Emit one of the Notifications events with {header, subtitle?, msg, time?};
+// time is in ms (values < 100 are treated as seconds), default 3000.
 export class Notification {
     constructor(events) {
         this._events = events;
@@ -7,16 +10,16 @@ export class Notification {
 
     async init() {
         this._events.on(Notifications.INFO, (data) => {
-            this._notification("info", data.header, data.msg, data.time);
+            this._notification("info", data.header, data.subtitle, data.msg, data.time);
         });
         this._events.on(Notifications.DANGER, (data) => {
-            this._notification("danger", data.header, data.msg, data.time);
+            this._notification("danger", data.header, data.subtitle, data.msg, data.time);
         });
         this._events.on(Notifications.WARNING, (data) => {
-            this._notification("warning", data.header, data.msg, data.time);
+            this._notification("warning", data.header, data.subtitle, data.msg, data.time);
         });
         this._events.on(Notifications.PRIMARY, (data) => {
-            this._notification("primary", data.header, data.msg, data.time);
+            this._notification("primary", data.header, data.subtitle, data.msg, data.time);
         });
     }
 
@@ -29,7 +32,7 @@ export class Notification {
         let subtitleHtml;
         if (subtitle) subtitleHtml = `<h3 class="subtitle">${subtitle}</h3>`
 
-        // Vorherige Notifications schließen und entfernen
+        // Close and remove previous notifications
         const existingBoxes = appHeader.querySelectorAll(".notification-box");
         existingBoxes.forEach((el) => {
             el.classList.remove("show");
@@ -41,7 +44,7 @@ export class Notification {
             <div class="notification-box">
                 <div class="notification-dialog ios-style bg-${type}">
                     <div class="notification-header">
-                        <strong>${title || ""}</h5>
+                        <strong>${title || ""}</strong>
                         <div class="right">
                             <button type="button" class="close-button" aria-label="Close">
                                 <ion-icon name="close-circle"></ion-icon>
@@ -93,12 +96,12 @@ export class Notification {
             });
         }
 
-        // Notification einblenden
+        // Fade the notification in
         setTimeout(() => {
             notificationBox.classList.add("show");
         }, 50);
 
-        // Nach x Sekunden / Millisekunden wieder entfernen
+        // Remove it again after x seconds / milliseconds
         if (time) {
             const duration = time < 100 ? time * 1000 : time;
             autoCloseTimeout = setTimeout(() => {

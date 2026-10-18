@@ -5,7 +5,6 @@ import (
 	"chatbit/internal/domain"
 	"errors"
 	"io/fs"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -58,8 +57,9 @@ func (s *Server) Start() error {
 		IdleTimeout:       idleTimeout,
 	}
 
-	if err := servObj.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatal(err)
+	err := servObj.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
 
 	return nil

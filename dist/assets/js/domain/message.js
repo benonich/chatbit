@@ -1,4 +1,4 @@
-// domain/Message.js
+// domain/message.js
 // Represents a single chat message — always holds decrypted values
 // Encryption/decryption is handled by the adapter layer, not here
 
@@ -73,26 +73,6 @@ export class Message {
         });
     }
 
-    // Create a new outgoing text message
-    static createText({ roomId, aliasId, alias, content, ttl, store }) {
-        return new Message({
-            roomId, aliasId, alias, content,
-            type: Message.TYPE_TEXT,
-            ttl, store,
-        });
-    }
-
-    // Create a new outgoing file/image message
-    static createFile({ roomId, aliasId, alias, mimeType, totalSize, chunkSize, chunksTotal, ttl, store }) {
-        return new Message({
-            roomId, aliasId, alias,
-            content: mimeType,  // for files, content holds the mime type
-            type: Message.TYPE_IMAGE,
-            ttl, store,
-            mimeType, totalSize, chunkSize, chunksTotal,
-        });
-    }
-
     // -------------------------------------------------------------------------
     // Serialization — Message → JSON (adapter encrypts fields before storing/sending)
     // -------------------------------------------------------------------------
@@ -126,7 +106,6 @@ export class Message {
     isRoom(roomId) { return this.roomId === roomId; }
 
     isImage()    { return this.type === Message.TYPE_IMAGE; }
-    isText()     { return this.type === Message.TYPE_TEXT; }
 
     get date()          { return new Date(this.timestamp); }
     get formattedTime() { return this.date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }

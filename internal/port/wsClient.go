@@ -3,6 +3,7 @@ package port
 import (
 	"bytes"
 	"chatbit/internal/adapter/pubsub"
+	"chatbit/internal/adapter/vapid"
 	"chatbit/internal/core"
 	"chatbit/internal/domain"
 	"encoding/json"
@@ -40,7 +41,7 @@ var (
 )
 
 type WsOutbound struct {
-	MsgType int // websocket.TextMessage oder websocket.BinaryMessage
+	MsgType int // websocket.TextMessage or websocket.BinaryMessage
 	Data    []byte
 }
 
@@ -80,7 +81,16 @@ type WsClient struct {
 }
 
 func init() {
-	domain.FileDir = os.Getenv("IMAGE_TMP_DIR")
+	dir := os.Getenv("IMAGE_TMP_DIR")
+	if dir != "" {
+		domain.FileDir = dir
+	}
+
+	// Create the directory up front, otherwise the hourly file cleanup fails until the first upload
+	err := os.MkdirAll(domain.FileDir, 0o755)
+	if err != nil {
+		slog.Error("not possible to create file directory", slog.String("dir", domain.FileDir), slog.String("error", err.Error()))
+	}
 	slog.Info("FileDir", slog.String("Dir", domain.FileDir))
 }
 
@@ -94,7 +104,20 @@ func (c *WsClient) readPump() {
 		slog.Info("client disconnected readPump", slog.String("UID", c.UID.String()))
 		c.ticker.Stop()
 		c.conn.Close()
-		c.psWsMsgAdapter.Unsubscribe(c.UID)
+		err := c.psWsMsgAdapter.Unsubscribe(c.UID)
+		if err != nil {
+			slog.Error("not possible to unsubscribe client", slog.String("UID", c.UID.String()), slog.String("error", err.Error()))
+		}
+
+		// LastSeen is the time the peer was last online, so it has to be set on disconnect too —
+		// otherwise a peer that stayed connected for more than a week counts as offline immediately.
+		err = c.app.DB.Peer.Add(domain.Peer{
+			ID:       c.UID,
+			LastSeen: time.Now(),
+		})
+		if err != nil {
+			slog.Error("not possible update peer last seen time", slog.String("error", err.Error()))
+		}
 	}()
 
 	slog.Info("peer connected", slog.String("peerID:", c.UID.String()))
@@ -137,13 +160,14 @@ func (c *WsClient) readPump() {
 			continue
 		}
 
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
+		message = bytes.TrimSpace(bytes.ReplaceAll(message, newline, space))
 
 		wsMsg := domain.WsMessage{}
 
 		err = json.Unmarshal(message, &wsMsg)
 		if err != nil {
 			slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+			continue
 		}
 
 		switch domain.WsMessageType(wsMsg.Type) {
@@ -172,7 +196,9 @@ func (c *WsClient) readPump() {
 					slog.Debug("not possible send message over ws, peer is offline", slog.String("peer", peer.ID.String()), slog.String("error", err.Error()))
 					p, err := c.app.DB.Peer.Get(peer.ID[:])
 					if err != nil {
+						// Without the peer we don't know LastSeen — don't remove it from the room
 						slog.Error("not possible to get peer", slog.String("error", err.Error()))
+						continue
 					}
 
 					if p.LastSeen.Before(time.Now().Add(-24 * 7 * time.Hour)) {
@@ -185,6 +211,9 @@ func (c *WsClient) readPump() {
 
 							return nil
 						})
+						if err != nil {
+							slog.Error("not possible to remove offline peer from room", slog.String("room", msg.RoomID.String()), slog.String("error", err.Error()))
+						}
 
 						continue
 					}
@@ -211,22 +240,26 @@ func (c *WsClient) readPump() {
 					continue
 				}
 
+				roomEmpty := false
+
 				err = c.app.DB.Room.Update(room[:], func(r *domain.Room) error {
 					r.RemovePeer(c.UID)
-
-					if len(r.Peers) == 0 {
-						slog.Info("room has no peers, will be deleted", slog.String("room", room.String()))
-
-						r = nil
-
-						return nil
-					}
+					roomEmpty = len(r.Peers) == 0
 
 					return nil
 				})
 				if err != nil {
 					slog.Error("not possible to update room", slog.String("error", err.Error()))
 					continue
+				}
+
+				if roomEmpty {
+					slog.Info("room has no peers, will be deleted", slog.String("room", room.String()))
+
+					err = c.app.DB.Room.Delete(room[:])
+					if err != nil {
+						slog.Error("not possible to delete room", slog.String("error", err.Error()))
+					}
 				}
 			}
 		case domain.WsTypeJoinRoom:
@@ -381,7 +414,7 @@ func (c *WsClient) writePump() {
 			if !ok {
 				// The channel is closed
 				slog.Error("channel closed from unsubscribe event", slog.String("UID:", c.UID.String()))
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{}) // best effort, the connection is closed anyway
 				return
 			}
 
@@ -449,20 +482,22 @@ func (c *WsClient) sendPushNotification(peerID uuid.UUID) {
 
 	body, _ := json.Marshal(map[string]string{
 		"title": "- ChatBit -",
-		"body":  "🔒 Neue Nachricht",
+		"body":  "🔒 New message",
 		"url":   "/",
 	})
 
 	option := webpush.Options{
 		Subscriber:      "info@benoni.dev",
-		VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
-		VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+		VAPIDPublicKey:  vapid.Keys().PublicKey,
+		VAPIDPrivateKey: vapid.Keys().PrivateKey,
 		TTL:             30,
 	}
 
 	resp, err := webpush.SendNotification(body, sub, &option)
 	if err != nil {
+		// resp is nil here — returning avoids a nil pointer panic that would crash the server
 		slog.Error("not possible to send push notification", slog.String("error", err.Error()))
+		return
 	}
 
 	defer resp.Body.Close()
