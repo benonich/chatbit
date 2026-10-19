@@ -2,15 +2,17 @@ import {EventBus, Events} from './adapter/event.js';
 import {AesAdapter} from './adapter/aes.js';
 import {DatabaseAdapter} from './adapter/database.js';
 import {WebSocketAdapter} from './adapter/websocket.js';
-import {KeyStore} from './adapter/key_store.js';
+import {KeyStore, MIN_PASSWORD_LENGTH} from './adapter/key_store.js';
 import {Page, Pages} from './adapter/page.js';
 import {ViewLock} from "./adapter/view_lock.js";
 import ViewHome from "./adapter/view_home.js";
 import {ViewRoom} from "./adapter/view_room.js";
 import {QRScanner} from "./adapter/scanner.js";
 import {Modal} from "./adapter/modal.js";
-import {Notification} from "./adapter/notification.js";
+import {Notification, Notifications} from "./adapter/notification.js";
 import {Push} from "./adapter/push.js";
+import {Expiry} from "./adapter/expiry.js";
+import {ViewSettings} from "./adapter/view_settings.js";
 
 // Composition root: creates all adapters and views, wires them to one shared
 // EventBus and decides which page is shown on startup (login, lock or home).
@@ -28,6 +30,8 @@ export class App {
         this.modal = new Modal(this.events);
         this.notification = new Notification(this.events);
         this.push = new Push(this.events);
+        this.expiry = new Expiry(this.events, this.db);
+        this.viewSettings = new ViewSettings(this.events, this.keyStore, this.db, this.ws);
     }
 
     async init() {
@@ -41,6 +45,8 @@ export class App {
         await this.modal.init();
         await this.notification.init();
         await this.push.init();
+        this.expiry.init();
+        this.viewSettings.init();
 
         await this._checkIsUserLoggedIn();
 
@@ -95,7 +101,17 @@ export class App {
         console.log("New Register");
 
         const password = form.querySelector('#lo_password').value;
-        const alias = form.querySelector('#lo_alias').value;
+        const alias = form.querySelector('#lo_alias').value.trim();
+
+        if (!alias) {
+            this.events.emit(Notifications.WARNING, {header: "Register", msg: "Please choose an alias."});
+            return;
+        }
+        // The password protects all room keys on this device — PBKDF2 alone does not save a short one
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            this.events.emit(Notifications.WARNING, {header: "Register", msg: `The password needs at least ${MIN_PASSWORD_LENGTH} characters.`});
+            return;
+        }
 
         await this.keyStore.register(alias, password);
 

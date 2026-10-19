@@ -4,13 +4,15 @@
 
 export class Room {
 
-    constructor({ id, name, key, pushNotifications, store, ttl }) {
+    constructor({ id, name, key, pushNotifications, store, ttl, messageTTL, lastRead }) {
         this.id                = id;
         this.name              = name;              // decrypted
         this.key               = key;              // encrypted base64 — only KeyStore uses this
         this.pushNotifications = pushNotifications ?? false;
         this.store             = store ?? false;
-        this.ttl               = ttl ?? 0;
+        this.ttl               = ttl ?? 0;         // room maximum (seconds), fixed by the server
+        this.messageTTL        = messageTTL ?? 0;  // TTL of own messages (seconds), 0 = room maximum — local only
+        this.lastRead          = lastRead ?? 0;    // timestamp (ms) of the newest message seen in the room — local only
     }
 
     // -------------------------------------------------------------------------
@@ -26,6 +28,8 @@ export class Room {
             pushNotifications: row.pushNotifications,
             store:             row.store,
             ttl:               row.ttl,
+            messageTTL:        row.messageTTL,
+            lastRead:          row.lastRead,
         });
     }
 
@@ -41,6 +45,8 @@ export class Room {
             pushNotifications: this.pushNotifications,
             store:              this.store,
             ttl:                this.ttl,
+            messageTTL:         this.messageTTL,
+            lastRead:           this.lastRead,
         };
     }
 

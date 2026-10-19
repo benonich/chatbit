@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,9 +43,12 @@ func (s *Server) Start() error {
 	// WebSocket connection
 	s.servMux = http.NewServeMux()
 
+	// Loaded first: it also sets domain.MaxFileSize, which the file server tells the app
+	limits := LoadLimitConfig()
+
 	s.StartFileServer(s.buildInfo)
 
-	s.StartWebSocketServer()
+	s.StartWebSocketServer(limits)
 
 	s.startFileCleanup()
 
@@ -75,6 +79,15 @@ func (s *Server) startFileCleanup() {
 				if err != nil || d.IsDir() {
 					return err
 				}
+				// Abandoned uploads (connection lost before transfer_done)
+				if strings.HasSuffix(d.Name(), ".part") {
+					info, err := d.Info()
+					if err == nil && time.Since(info.ModTime()) > time.Hour {
+						_ = os.Remove(path)
+					}
+					return nil
+				}
+
 				fileID, err := uuid.Parse(d.Name())
 				if err != nil {
 					return nil

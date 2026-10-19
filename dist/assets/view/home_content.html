@@ -10,7 +10,9 @@
 
             Copyright © Benoni GmbH <span class="yearNow"></span>. All Rights Reserved.
         </div>
-        <img src="assets/img/LogoBenoni.svg" alt="icon" class="footer-logo mb-2 w100">
+        <!-- logo per theme, switched by the CSS (.logo-for-dark / .logo-for-light) -->
+        <img src="assets/img/LogoBenoni.svg" alt="icon" class="footer-logo mb-2 w100 logo-for-dark">
+        <img src="assets/img/LogoBenoniLight.svg" alt="icon" class="footer-logo mb-2 w100 logo-for-light">
         <div> <span class="text-light">ChatBit</span> is AES 256 Bit encrypted chat.</div>
          <br>
         This project is OpenSource and free forever.
@@ -63,19 +65,32 @@
                     </div>
                 </a>
             </li>
+            <li>
+                <a href="#" class="item" data-bs-dismiss="offcanvas" data-action="app:update">
+                    <div class="icon-box bg-primary">
+                        <ion-icon name="refresh-outline"></ion-icon>
+                    </div>
+                    <div class="in">
+                        Update App
+                    </div>
+                </a>
+            </li>
 
         </ul>
+
+        <!-- running version, filled from <meta name="app-version"> -->
+        <div id="in_app_version" class="app-version"></div>
 
     </div>
     <!-- sidebar buttons -->
     <div class="sidebar-buttons">
-        <a href="#" class="button">
+        <a href="#" class="button" data-bs-toggle="modal" data-bs-target="#in_user_settings" data-action="profile:open">
             <ion-icon name="person-outline"></ion-icon>
         </a>
-        <a href="#" class="button" onclick="Logout()">
+        <a href="#" class="button" data-action="settings:delete_all_ask">
             <ion-icon name="trash-outline"></ion-icon>
         </a>
-        <a href="#" class="button" data-bs-toggle="modal" data-bs-target="#in_user_settings" onclick="OpenUserSettings()">
+        <a href="#" class="button" data-bs-toggle="modal" data-bs-target="#in_app_settings" data-action="settings:open">
             <ion-icon name="settings-outline"></ion-icon>
         </a>
         <a href="/lockscreen" class="button" id="change_to_lock">
@@ -146,6 +161,10 @@
                                         </div>
                                     </li>
                                 </ul>
+                                <div class="text-muted small mt-1">
+                                    Messages are deleted after this time (0 = 30 days, the maximum).
+                                    It can only be set now and not changed later.
+                                </div>
 
 
                             <div class="mt-2">
@@ -222,11 +241,11 @@
             <div class="modal-body">
                 <div class="login-form">
                     <div class="section mt-2">
-                        <h1>User Settings</h1>
-                        <h4>Update your profile</h4>
+                        <h1>Profile</h1>
+                        <h4>Your alias is shown with every message you send</h4>
                     </div>
                     <div class="section mt-4 mb-5">
-                        <form action="javascript:RenameAlias()">
+                        <form onsubmit="event.preventDefault();">
                             <div class="form-group basic">
                                 <div class="input-wrapper">
                                     <label class="form-label" for="in_settings_alias">Alias</label>
@@ -237,7 +256,7 @@
                                 </div>
                             </div>
                             <div class="mt-2">
-                                <button type="submit" class="btn btn-primary btn-block btn-lg">Save</button>
+                                <button type="submit" class="btn btn-primary btn-block btn-lg" data-action="profile:save">Save</button>
                             </div>
                         </form>
                     </div>
@@ -247,3 +266,156 @@
     </div>
 </div>
 <!-- * Modal User Settings -->
+
+<!-- Modal App Settings -->
+<div class="modal fade modalbox" id="in_app_settings" data-bs-backdrop="static" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Settings</h5>
+                <a href="#" data-bs-dismiss="modal">Close</a>
+            </div>
+            <div class="modal-body settings-modal">
+
+                <div class="listview-title mt-2">Appearance</div>
+                <ul class="listview simple-listview">
+                    <li>
+                        <div>Dark mode</div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="in_settings_dark" data-change="settings:dark_mode">
+                            <label class="form-check-label" for="in_settings_dark"></label>
+                        </div>
+                    </li>
+                </ul>
+
+                <div class="listview-title mt-2">Password</div>
+                <form class="section" onsubmit="event.preventDefault();">
+                    <div class="form-group basic">
+                        <div class="input-wrapper">
+                            <label class="form-label" for="in_settings_pw_current">Current password</label>
+                            <input type="password" class="form-control" id="in_settings_pw_current" autocomplete="current-password">
+                        </div>
+                    </div>
+                    <div class="form-group basic">
+                        <div class="input-wrapper">
+                            <label class="form-label" for="in_settings_pw_new">New password</label>
+                            <input type="password" class="form-control" id="in_settings_pw_new" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <div class="form-group basic">
+                        <div class="input-wrapper">
+                            <label class="form-label" for="in_settings_pw_repeat">Repeat new password</label>
+                            <input type="password" class="form-control" id="in_settings_pw_repeat" autocomplete="new-password">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block mt-2" data-action="settings:change_password">Change Password</button>
+                </form>
+
+                <div class="listview-title mt-2">Storage</div>
+                <ul class="listview simple-listview">
+                        <li>
+                            <div>Messages</div>
+                            <span class="text-muted" data-field="storage_messages"></span>
+                        </li>
+                        <li>
+                            <div>Images &amp; documents</div>
+                            <span class="text-muted" data-field="storage_images"></span>
+                        </li>
+                        <li>
+                            <div>Total used</div>
+                            <span class="text-muted" data-field="storage_total"></span>
+                        </li>
+                        <li>
+                            <div>Protected from clean up</div>
+                            <span class="text-muted" data-field="storage_persisted"></span>
+                        </li>
+                </ul>
+                <div class="section mt-2">
+                    <button type="button" class="btn btn-outline-danger btn-block" data-action="settings:clean_images_ask">Delete Downloaded Files</button>
+                </div>
+
+                <div class="listview-title mt-2">Info</div>
+                <ul class="listview simple-listview mb-4">
+                        <li>
+                            <div>Version</div>
+                            <span class="text-muted" data-field="info_version"></span>
+                        </li>
+                        <li>
+                            <div>Commit</div>
+                            <span class="text-muted" data-field="info_commit"></span>
+                        </li>
+                        <li>
+                            <div>Build</div>
+                            <span class="text-muted" data-field="info_build"></span>
+                        </li>
+                        <li>
+                            <div>Server</div>
+                            <span class="text-muted" data-field="info_server"></span>
+                        </li>
+                        <li>
+                            <div>Push notifications</div>
+                            <span class="text-muted" data-field="info_push"></span>
+                        </li>
+                        <li>
+                            <div>Offline cache</div>
+                            <span class="text-muted" data-field="info_sw"></span>
+                        </li>
+                </ul>
+
+            </div>
+        </div>
+    </div>
+</div>
+<!-- * Modal App Settings -->
+
+<!-- Delete Images -->
+<div class="modal fade dialogbox" id="modal:home:clean_images" data-bs-backdrop="static" tabindex="-1" style="display: none;">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Images</h5>
+            </div>
+            <div class="modal-body">
+                Delete all downloaded images and documents on this device? Files of rooms with Cloud Store can be downloaded again while their message exists, files of other rooms are gone for good.
+            </div>
+            <div class="modal-footer">
+                <div class="btn-list">
+                    <a href="#" class="btn btn-text-danger btn-block" data-bs-dismiss="modal" data-action="settings:clean_images">
+                        <i class="bi bi-trash"></i>
+                        DELETE
+                    </a>
+                    <a href="#" class="btn btn-text-primary btn-block" data-bs-dismiss="modal">
+                        CANCEL
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- * Delete Images -->
+
+<!-- Delete Everything -->
+<div class="modal fade dialogbox" id="modal:home:delete_all" data-bs-backdrop="static" tabindex="-1" style="display: none;">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Everything</h5>
+            </div>
+            <div class="modal-body">
+                Your profile, all rooms with their keys, messages and images are deleted and you leave all rooms. This cannot be undone — without an invite code you cannot join a room again.
+            </div>
+            <div class="modal-footer">
+                <div class="btn-list">
+                    <a href="#" class="btn btn-text-danger btn-block" data-bs-dismiss="modal" data-action="settings:delete_all">
+                        <i class="bi bi-trash"></i>
+                        DELETE EVERYTHING
+                    </a>
+                    <a href="#" class="btn btn-text-primary btn-block" data-bs-dismiss="modal">
+                        CANCEL
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- * Delete Everything -->

@@ -124,7 +124,8 @@ export class WebSocketAdapter {
         clearTimeout(this._reconnectTimer);
         this._reconnectTimer = null;
 
-        const conn = new WebSocket(this._getEndpoint() + "?client_uid=" + this._profile.clientId);
+        // The client id is sent in the first frame (hello), not in the URL — URLs end up in proxy logs
+        const conn = new WebSocket(this._getEndpoint());
         conn.binaryType = "arraybuffer";
         this.conn = conn;
 
@@ -164,6 +165,9 @@ export class WebSocketAdapter {
         console.log("WS connection connected");
         this._reconnectDelay = RECONNECT_DELAY_MIN;
 
+        // Must be the first frame of every connection, before anything from the outbox
+        this.conn.send(JSON.stringify({type: "hello", data: {clientUid: this._profile.clientId}}));
+
         // The server forgets all subscriptions when the socket closes,
         // so all rooms have to be joined again after every reconnect.
         try {
@@ -189,7 +193,7 @@ export class WebSocketAdapter {
         const lastTimeStamp = await this._db.getLatestTimestamp();
 
         this.joinRooms({
-            rooms: rooms.map(r => ({id: r.id, notification: r.push_notifications})),
+            rooms: rooms.map(r => ({id: r.id, notification: r.pushNotifications, ttl: r.ttl})),
             lastConnectionTime: lastTimeStamp,
         });
     }
@@ -246,8 +250,11 @@ export class WebSocketAdapter {
         }
     }
 
+    // The server sets the timestamp. The local one is not sent: the clock offset of a device is
+    // a fingerprint that would make it recognizable across rooms. "synced" is only local.
     sendMessage(msg) {
-        this._sendText("message", msg);
+        const {timestamp, synced, ...data} = msg.toJSON ? msg.toJSON() : msg;
+        this._sendText("message", data);
     }
 
     joinRooms(msg) {
@@ -283,12 +290,16 @@ export class WebSocketAdapter {
 
                 this._events.emit(Events.WS.RECEIVED_MESSAGE, Message.fromJSON(msg.data));
                 break;
+            case "room_info":
+                this._events.emit(Events.WS.ROOM_INFO, msg.data);
+                break;
             case "transfer_ack":
                 this.resolveAck(msg.data.id, msg.data.chunk);
                 break;
             case "transfer_nack":
-                // ToDo
-                console.log("received nack");
+                // The server rejected the upload (e.g. too large) — stop waiting for an ACK
+                console.warn("transfer rejected:", msg.data.id, msg.data.reason);
+                this.rejectAck(msg.data.id, msg.data.reason);
                 break;
             case "transfer_start":
                 this._handleTransferStart(
@@ -385,6 +396,7 @@ export class WebSocketAdapter {
                 return;
             } catch (err) {
                 console.warn(`File upload ${msg.id} failed (attempt ${attempt}/${FILE_UPLOAD_ATTEMPTS}):`, err.message);
+                if (err.message.startsWith("rejected by server")) break; // trying again won't help
             }
         }
         console.error(`File upload ${msg.id} failed, giving up`);
@@ -435,6 +447,13 @@ export class WebSocketAdapter {
             this._pendingAck = null;
         } else {
             this._bufferedAcks.set(`${id}:${chunkIndex}`, true);
+        }
+    }
+
+    rejectAck(id, reason) {
+        if (this._pendingAck && this._pendingAck.id === id) {
+            this._pendingAck.reject(new Error(`rejected by server: ${reason || "unknown"}`));
+            this._pendingAck = null;
         }
     }
 

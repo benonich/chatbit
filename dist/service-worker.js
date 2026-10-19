@@ -3,8 +3,10 @@
 // service worker usage on https://github.com/mozilla/serviceworker-cookbook
 //--------------------------------------------------------------------------
 
-// Injected by Go server at startup — changes with every new build
-var CACHE_VERSION = '{{.Commit}}';
+// Injected by Go server at startup — changes with every build (version, commit and build date,
+// so a local build of the same commit is an update as well). Without a build date the server
+// uses its start time.
+var CACHE_VERSION = '{{.Version}}-{{printf "%.7s" .Commit}}-{{.BuildDate}}';
 
 var CACHE_NAME = 'chatbit-v' + CACHE_VERSION;
 
@@ -31,6 +33,10 @@ var ASSETS_TO_CACHE = [
   'assets/js/adapter/aes.js',
   'assets/js/adapter/database.js',
   'assets/js/adapter/event.js',
+  'assets/js/adapter/expiry.js',
+  'assets/js/adapter/view_settings.js',
+  'assets/js/adapter/color.js',
+  'assets/js/lib/ionicons-5.5.2/ionicons.esm.js',
   'assets/js/adapter/invite.js',
   'assets/js/adapter/key_store.js',
   'assets/js/adapter/modal.js',
@@ -54,7 +60,8 @@ var ASSETS_TO_CACHE = [
   'assets/view/login_header.html',
   'assets/view/room_content.html',
   'assets/view/room_header.html',
-  'assets/img/LogoBenoni.svg'
+  'assets/img/LogoBenoni.svg',
+  'assets/img/LogoBenoniLight.svg'
 ];
 
 const IGNORED_PATHS = ['/api/', '/ws/'];
@@ -74,7 +81,10 @@ self.addEventListener('install', event => {
 
     event.waitUntil(
         caches.open(CACHE_NAME)
-            .then(cache => cache.addAll(ASSETS_TO_CACHE))
+            // cache: 'reload' bypasses the browser HTTP cache. Otherwise files the browser still
+            // holds as "fresh" (cached before the server sent no-cache) end up in the new cache
+            // and the update only half arrives.
+            .then(cache => cache.addAll(ASSETS_TO_CACHE.map(url => new Request(url, { cache: 'reload' }))))
             .then(() => self.skipWaiting())  // activate immediately, don't wait for tab close
     );
 });
@@ -99,6 +109,11 @@ self.addEventListener('activate', event => {
             .then(() => self.clients.claim())   // take control of all open tabs
             .then(() => notifyClients())        // tell the app: new version is live
     );
+});
+
+// Manual update from the menu: activate a waiting version immediately
+self.addEventListener('message', event => {
+    if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 function notifyClients() {
@@ -145,7 +160,8 @@ self.addEventListener('fetch', event => {
                 return cached;
             }
 
-            return fetch(request).then(response => {
+            // no-cache: revalidate with the server, never take a stale file from the HTTP cache
+            return fetch(request, { cache: 'no-cache' }).then(response => {
                 if (!response || response.status !== 200) {
                     return response;
                 }

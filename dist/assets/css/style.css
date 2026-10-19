@@ -9607,3 +9607,135 @@ body.dark-mode-active .cookies-modal {
 body.dark-mode-active.rtl-mode .notification-dialog.android-style .notification-footer .notification-button {
   border-left-color: #1B283B;
 }
+
+/* -------------------------------------------------------------------------
+   Message TTL (self-deleting messages)
+   ------------------------------------------------------------------------- */
+
+/* Room TTL under the room name in the header */
+.appHeader .pageTitle .room-ttl {
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.8;
+  line-height: 1;
+}
+
+/* Remaining time in the message footer */
+.message-item .footer .msg-ttl {
+  margin-left: 4px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.message-item .footer .msg-ttl ion-icon {
+  vertical-align: -2px;
+}
+
+/* Unread messages in the room list of the home page */
+.unread-badge {
+  margin-left: auto;
+  align-self: center;
+}
+
+.unread-badge[hidden] {
+  display: none !important;
+}
+
+/* Running app version in the home menu */
+.app-version {
+  padding: 8px 16px;
+  font-size: 11px;
+  opacity: 0.6;
+  word-break: break-all;
+}
+
+/* Settings modal: values right aligned next to their label */
+.settings-modal .simple-listview li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-modal [data-field] {
+  text-align: right;
+  word-break: break-word;
+}
+
+/* Alias color per user (hue from the alias id, see aliasHue in view_room.js).
+   OKLCH keeps the perceived lightness equal for every hue: dark text on the light theme,
+   light text on the dark theme, both with a contrast of at least 4.5:1. HSL is the fallback. */
+.message-item .title.alias-color {
+  color: hsl(var(--alias-hue) 70% 32%);
+  color: oklch(0.5 0.14 var(--alias-hue));
+}
+
+body.dark-mode-active .message-item .title.alias-color {
+  color: hsl(var(--alias-hue) 70% 72%);
+  color: oklch(0.8 0.12 var(--alias-hue));
+}
+
+/* Color per room (hue from the room id, see idHue in color.js): bubble in the room list and
+   header bar of the chat. White text and icons on it have a contrast of at least 4.7:1 for
+   every hue, in light and dark mode. HSL is the fallback for browsers without OKLCH. */
+.room-color,
+body.dark-mode-active .appHeader.room-color {
+  background: hsl(var(--room-hue) 65% 40%) !important;
+  background: oklch(0.52 0.15 var(--room-hue)) !important;
+  color: #FFF;
+}
+
+/* Status bar area above the header (safe area, .appHeader:before) in the room color as well */
+.appHeader.room-color:before {
+  background: hsl(var(--room-hue) 65% 40%);
+  background: oklch(0.52 0.15 var(--room-hue));
+}
+
+/* Add and send buttons of the chat footer in the room color (--room-hue is set on #appContent) */
+.btn.room-accent {
+  background: hsl(var(--room-hue) 65% 40%) !important;
+  background: oklch(0.52 0.15 var(--room-hue)) !important;
+  border-color: transparent !important;
+  color: #FFF !important;
+}
+
+/* Own message bubbles in the room color (the id selector wins over the dark mode rule) */
+#ct_room .message-item.user .bubble {
+  background: hsl(var(--room-hue) 65% 40%);
+  background: oklch(0.52 0.15 var(--room-hue));
+  color: #FFF;
+}
+
+/* Logo per theme: LogoBenoni.svg on dark, LogoBenoniLight.svg on light. Both are in the page,
+   so switching the theme in the settings changes the logo immediately. */
+body:not(.dark-mode-active) .logo-for-dark,
+body.dark-mode-active .logo-for-light {
+  display: none !important;
+}
+
+/* Image button in a message: only an outline in the text color of the bubble — white in own
+   (room colored) bubbles and in dark mode, dark in other bubbles in light mode */
+.message-item .bubble .msg-image-btn {
+  background: transparent !important;
+  border: 1px solid currentColor !important;
+  color: inherit !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.message-item .bubble .msg-image-btn:hover,
+.message-item .bubble .msg-image-btn:active {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Document in a message: icon, file name (shortened) and size */
+.message-item .bubble .msg-file-btn {
+  max-width: 100%;
+  text-align: left;
+}
+
+.msg-file-btn .msg-file-size {
+  opacity: 0.7;
+  white-space: nowrap;
+}

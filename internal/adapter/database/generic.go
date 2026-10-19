@@ -78,6 +78,34 @@ func (a *Adapter[T]) AddObjectWithTTL(ID []byte, obj T, ttl time.Duration) error
 	return nil
 }
 
+// InsertObjectWithTTL stores the object only if the key does not exist yet (domain.ErrObjExists).
+// Check and write run in one transaction, so two concurrent inserts can not both succeed.
+func (a *Adapter[T]) InsertObjectWithTTL(ID []byte, obj T, ttl time.Duration) error {
+	objB, err := json.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("not possible to convert go object to byte")
+	}
+
+	err = a.db.Update(func(txn *badger.Txn) error {
+		_, err := txn.Get(ID)
+		if err == nil {
+			return domain.ErrObjExists
+		}
+		if !errors.Is(err, badger.ErrKeyNotFound) {
+			return err
+		}
+		return txn.SetEntry(badger.NewEntry(ID, objB).WithTTL(ttl))
+	})
+	if errors.Is(err, domain.ErrObjExists) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("not possible to store object to database: %w", err)
+	}
+
+	return nil
+}
+
 func (a *Adapter[T]) GetObjectByID(ID []byte) (T, error) {
 	var err error
 

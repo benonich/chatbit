@@ -220,8 +220,8 @@ func (ps *Adapter[U, T]) HasSubscriber(subID U) (bool, error) {
 
 // AddSubscriber add a new subscriber to the adapter
 func (ps *Adapter[U, T]) AddSubscriber(subID U, sub chan T) error {
-	ps.mu.RLock()
-	defer ps.mu.RUnlock()
+	ps.mu.Lock() // writes the map — a read lock is not enough
+	defer ps.mu.Unlock()
 
 	if ps.closed {
 		return fmt.Errorf("not possible to check subscriber from a closed adapter: %w", ErrAlreadyClosed)
@@ -230,6 +230,10 @@ func (ps *Adapter[U, T]) AddSubscriber(subID U, sub chan T) error {
 	_, exist := ps.subs[subID]
 	if exist {
 		return fmt.Errorf("can not add subscriber: %w", ErrAlreadyExist)
+	}
+
+	if len(ps.subs) >= ps.MaxSubscribers {
+		return fmt.Errorf("not possible to add subscriber max number of subscriber reached: %w", ErrMaxSub)
 	}
 
 	ps.subs[subID] = sub

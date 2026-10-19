@@ -39,5 +39,7 @@ export const Modals = {
     HOME: {
         JOIN_ROOM: "modal:home:join_room",
         NEW_ROOM: "modal:room:new_room",
+        CLEAN_IMAGES: "modal:home:clean_images",
+        DELETE_ALL: "modal:home:delete_all",
     },
 };

@@ -37,7 +37,6 @@ const (
 var (
 	newline = []byte{'\n'}
 	space   = []byte{' '}
-	FileTTL = int64(60 * 60 * 24 * 7)
 )
 
 type WsOutbound struct {
@@ -72,8 +71,12 @@ type WsClient struct {
 	// Buffered channel of outbound messages.
 	send           chan WsOutbound
 	UID            uuid.UUID
+	ip             string
 	psWsMsgAdapter *pubsub.AdapterTopic[uuid.UUID, WsOutbound]
 	app            *core.Application
+	hub            *wsHandler
+	limits         *Limits
+	connLimits     connLimits
 
 	// File Transfer
 	fileTransfer   map[uuid.UUID]*domain.Transfer
@@ -101,17 +104,19 @@ func init() {
 // reads from this goroutine.
 func (c *WsClient) readPump() {
 	defer func() {
-		slog.Info("client disconnected readPump", slog.String("UID", c.UID.String()))
+		slog.Debug("client disconnected readPump", slog.String("UID", c.UID.String()))
 		c.ticker.Stop()
 		c.conn.Close()
-		err := c.psWsMsgAdapter.Unsubscribe(c.UID)
-		if err != nil {
-			slog.Error("not possible to unsubscribe client", slog.String("UID", c.UID.String()), slog.String("error", err.Error()))
+		c.limits.ReleaseConn(c.ip)
+
+		// A newer connection with the same client id took over — it owns the subscription now
+		if !c.hub.unregister(c) {
+			return
 		}
 
 		// LastSeen is the time the peer was last online, so it has to be set on disconnect too —
 		// otherwise a peer that stayed connected for more than a week counts as offline immediately.
-		err = c.app.DB.Peer.Add(domain.Peer{
+		err := c.app.DB.Peer.Add(domain.Peer{
 			ID:       c.UID,
 			LastSeen: time.Now(),
 		})
@@ -120,7 +125,7 @@ func (c *WsClient) readPump() {
 		}
 	}()
 
-	slog.Info("peer connected", slog.String("peerID:", c.UID.String()))
+	slog.Debug("peer connected", slog.String("peerID:", c.UID.String()))
 
 	err := c.app.DB.Peer.Add(domain.Peer{
 		ID:       c.UID,
@@ -131,6 +136,12 @@ func (c *WsClient) readPump() {
 	}
 
 	c.conn.SetReadLimit(maxMessageSize)
+
+	// Replaces the short deadline for the hello frame; every pong extends it
+	err = c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err != nil {
+		slog.Error("error during SetReadDeadline", slog.String("error", err.Error()))
+	}
 
 	c.conn.SetPongHandler(func(string) error {
 		slog.Debug("receive pong", slog.String("UID:", c.UID.String()))
@@ -150,7 +161,7 @@ func (c *WsClient) readPump() {
 				log.Printf("error: %v", err)
 			}
 
-			slog.Info("client disconnected", slog.String("UID", c.UID.String()), slog.String("error", err.Error()))
+			slog.Debug("client disconnected", slog.String("UID", c.UID.String()), slog.String("error", err.Error()))
 
 			break
 		}
@@ -170,6 +181,15 @@ func (c *WsClient) readPump() {
 			continue
 		}
 
+		if !c.allowFrame(domain.WsMessageType(wsMsg.Type)) {
+			if c.connLimits.violations > maxViolations {
+				slog.Warn("too many frames over the limit, connection closed")
+				closeWith(c.conn, websocket.ClosePolicyViolation, "rate limit")
+				break
+			}
+			continue
+		}
+
 		switch domain.WsMessageType(wsMsg.Type) {
 		case domain.WsTypeMessage:
 			msg, ok := unmarshalWs[domain.Message](wsMsg.Data)
@@ -177,17 +197,40 @@ func (c *WsClient) readPump() {
 				continue
 			}
 
+			room, err := c.app.DB.Room.Get(msg.RoomID[:])
+			if err != nil {
+				slog.Error("not possible to get room", slog.String("error", err.Error()))
+				continue
+			}
+
+			// The room TTL is the upper limit, a message may only be shorter. The server time is
+			// used as timestamp, so every client calculates the same expiry (the client clock may be wrong).
+			msg.TTL = room.MessageTTL(msg.TTL)
+			msg.TimeStamp = uint64(time.Now().UnixMilli())
+
+			message, err = marshalWs(domain.WsTypeMessage, msg)
+			if err != nil {
+				slog.Error("not possible to marshal message", slog.String("error", err.Error()))
+				continue
+			}
+
+			// Stored before it is forwarded: a message id that exists already is rejected and not
+			// forwarded, so nobody can replace a message of someone else.
 			if msg.Store {
-				err = c.app.PS.Message.Publish(msg)
+				err = c.app.DB.Message.InsertWithTTL(msg, domain.ClampTTL(msg.TTL))
+				if errors.Is(err, domain.ErrObjExists) {
+					slog.Warn("message id exists already, rejected")
+					continue
+				}
 				if err != nil {
 					slog.Error("not possible to store message in database", slog.String("error", err.Error()))
 				}
 			}
 
-			room, err := c.app.DB.Room.Get(msg.RoomID[:])
+			// Activity keeps the room alive; rooms without activity expire (RoomStoreTTL)
+			err = c.app.DB.Room.UpdateWithTTL(room.ID[:], func(*domain.Room) error { return nil }, c.limits.RoomStoreTTL)
 			if err != nil {
-				slog.Error("not possible to get room", slog.String("error", err.Error()))
-				continue
+				slog.Error("not possible to refresh room", slog.String("error", err.Error()))
 			}
 
 			for _, peer := range room.Peers {
@@ -202,24 +245,24 @@ func (c *WsClient) readPump() {
 					}
 
 					if p.LastSeen.Before(time.Now().Add(-24 * 7 * time.Hour)) {
-						slog.Info("peer offline, will be removed from room", slog.String("room", msg.RoomID.String()), slog.String("peerID", peer.ID.String()), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
+						slog.Debug("peer offline, will be removed from room", slog.String("room", msg.RoomID.String()), slog.String("peerID", peer.ID.String()), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
 
-						err = c.app.DB.Room.Update(msg.RoomID[:], func(r *domain.Room) error {
+						err = c.app.DB.Room.UpdateWithTTL(msg.RoomID[:], func(r *domain.Room) error {
 							r.RemovePeer(peer.ID)
 
-							slog.Info("remove peer from room", slog.String("room", r.ID.String()), slog.String("peer", peer.ID.String()))
+							slog.Debug("remove peer from room", slog.String("room", r.ID.String()), slog.String("peer", peer.ID.String()))
 
 							return nil
-						})
+						}, c.limits.RoomStoreTTL)
 						if err != nil {
-							slog.Error("not possible to remove offline peer from room", slog.String("room", msg.RoomID.String()), slog.String("error", err.Error()))
+							slog.Error("not possible to remove offline peer from room", slog.String("error", err.Error()))
 						}
 
 						continue
 					}
 
-					if peer.Notification {
-						slog.Info("send push notification", slog.String("peer", peer.ID.String()), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
+					if peer.Notification && c.limits.AllowPush(peer.ID) {
+						slog.Debug("send push notification", slog.String("peer", peer.ID.String()), slog.String("peerOfflineSince", p.LastSeen.Format(time.RFC3339)))
 						c.sendPushNotification(peer.ID)
 					}
 
@@ -233,7 +276,7 @@ func (c *WsClient) readPump() {
 			}
 
 			for _, room := range leave.Rooms {
-				slog.Info("peer will leave room", slog.String("room", room.String()), slog.String("peer", c.UID.String()))
+				slog.Debug("peer will leave room", slog.String("room", room.String()), slog.String("peer", c.UID.String()))
 				err = c.psWsMsgAdapter.UnsubscribeFromTopic(room, c.UID)
 				if err != nil {
 					slog.Error("not possible to unsubscribe from topic", slog.String("error", err.Error()))
@@ -242,19 +285,19 @@ func (c *WsClient) readPump() {
 
 				roomEmpty := false
 
-				err = c.app.DB.Room.Update(room[:], func(r *domain.Room) error {
+				err = c.app.DB.Room.UpdateWithTTL(room[:], func(r *domain.Room) error {
 					r.RemovePeer(c.UID)
 					roomEmpty = len(r.Peers) == 0
 
 					return nil
-				})
+				}, c.limits.RoomStoreTTL)
 				if err != nil {
 					slog.Error("not possible to update room", slog.String("error", err.Error()))
 					continue
 				}
 
 				if roomEmpty {
-					slog.Info("room has no peers, will be deleted", slog.String("room", room.String()))
+					slog.Debug("room has no peers, will be deleted", slog.String("room", room.String()))
 
 					err = c.app.DB.Room.Delete(room[:])
 					if err != nil {
@@ -271,19 +314,29 @@ func (c *WsClient) readPump() {
 			var allMs []domain.Message
 			var msgSend []byte
 
-			for _, room := range join.Rooms {
-				err = c.psWsMsgAdapter.AddSubscriberToTopic(room.ID, c.UID)
-				if err != nil {
-					slog.Error("not possible subscribe to room", slog.String("error", err.Error()))
-					continue
-				}
+			// One frame with thousands of rooms would keep the server busy
+			if len(join.Rooms) > c.limits.cfg.MaxRoomsPerJoin {
+				slog.Warn("too many rooms in one join, cut", slog.Int("rooms", len(join.Rooms)))
+				join.Rooms = join.Rooms[:c.limits.cfg.MaxRoomsPerJoin]
+			}
 
-				err = c.app.DB.Room.Update(room.ID[:], func(r *domain.Room) error {
+			for _, room := range join.Rooms {
+				var roomTTL int64
+				err = c.app.DB.Room.UpdateWithTTL(room.ID[:], func(r *domain.Room) error {
 					r.AddPeer(c.UID, room.Notification)
+					// Rooms created before the TTL was stored get it once from the first join
+					roomTTL = r.SetTTLOnce(room.TTL)
 					return nil
-				})
+				}, c.limits.RoomStoreTTL)
 				if errors.Is(err, domain.ErrObjNotFound) {
-					slog.Info("peer will create new room", slog.String("room", room.ID.String()), slog.String("peer", c.UID.String()))
+					// A join of an unknown id creates the room — limited per IP, so nobody can
+					// fill the database with made up rooms
+					if !c.limits.AllowRoomCreate(c.ip) {
+						slog.Warn("room creation limit reached")
+						continue
+					}
+
+					slog.Debug("peer will create new room", slog.String("room", room.ID.String()), slog.String("peer", c.UID.String()))
 					r := &domain.Room{
 						ID: room.ID,
 						Peers: []domain.RoomPeer{
@@ -293,11 +346,26 @@ func (c *WsClient) readPump() {
 							},
 						},
 					}
-					err = c.app.DB.Room.Add(r)
+					roomTTL = r.SetTTLOnce(room.TTL)
+					err = c.app.DB.Room.AddWithTTL(r, c.limits.RoomStoreTTL(r))
 				}
-				if err != nil && !errors.Is(err, domain.ErrObjNotFound) {
+				if err != nil {
 					slog.Error("not possible to update room", slog.String("error", err.Error()))
 					continue
+				}
+
+				err = c.psWsMsgAdapter.AddSubscriberToTopic(room.ID, c.UID)
+				if err != nil && !errors.Is(err, pubsub.ErrAlreadyExist) {
+					slog.Error("not possible subscribe to room", slog.String("error", err.Error()))
+					continue
+				}
+
+				// Tell the client which TTL is in force (it may differ from what it sent)
+				msgSend, err = marshalWs(domain.WsTypeRoomInfo, domain.RoomInfo{ID: room.ID, TTL: roomTTL})
+				if err != nil {
+					slog.Error("not possible to marshal room info", slog.String("error", err.Error()))
+				} else {
+					c.send <- WsOutbound{MsgType: websocket.TextMessage, Data: msgSend}
 				}
 
 				allMs, err = c.app.DB.Message.GetAllSinceTimeStamp(room.ID, join.LastConnectionTime)
@@ -335,7 +403,22 @@ func (c *WsClient) readPump() {
 				continue
 			}
 
-			err = c.app.DB.Room.Add(&room)
+			// Only create — an existing room (peers, TTL) must never be overwritten
+			_, err = c.app.DB.Room.Get(room.ID[:])
+			if !errors.Is(err, domain.ErrObjNotFound) {
+				slog.Warn("room already exists, not created again")
+				continue
+			}
+
+			if !c.limits.AllowRoomCreate(c.ip) {
+				slog.Warn("room creation limit reached")
+				continue
+			}
+
+			room.TTL = domain.ClampTTL(room.TTL)
+			room.Peers = []domain.RoomPeer{{ID: c.UID}}
+
+			err = c.app.DB.Room.AddWithTTL(&room, c.limits.RoomStoreTTL(&room))
 			if err != nil {
 				slog.Error("not possible to create new room", slog.String("error", err.Error()))
 				continue
@@ -349,7 +432,14 @@ func (c *WsClient) readPump() {
 
 			push.ID = c.UID
 
-			slog.Info("subscribe push notifications", slog.String("UID", c.UID.String()))
+			// Only the push services of the browsers — any other address would let a client
+			// make the server send requests into the internal network
+			if !vapid.ValidEndpoint(push.Endpoint) {
+				slog.Warn("push endpoint rejected, not a known push service")
+				continue
+			}
+
+			slog.Debug("subscribe push notifications", slog.String("UID", c.UID.String()))
 
 			err = c.app.DB.Push.Add(push)
 			if err != nil {
@@ -362,7 +452,9 @@ func (c *WsClient) readPump() {
 				continue
 			}
 
-			c.handleTransferStart(&file)
+			if !c.handleTransferStart(&file) {
+				continue // rejected — not announced to the room
+			}
 
 			err = c.psWsMsgAdapter.PublishExclude(file.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: message})
 			if err != nil {
@@ -375,7 +467,9 @@ func (c *WsClient) readPump() {
 				continue
 			}
 
-			c.handleTransferDone(&file)
+			if !c.handleTransferDone(&file) {
+				continue // incomplete or rejected — not announced to the room
+			}
 
 			err = c.psWsMsgAdapter.Publish(file.RoomID, WsOutbound{MsgType: websocket.TextMessage, Data: message})
 			if err != nil {
@@ -401,7 +495,7 @@ func (c *WsClient) readPump() {
 func (c *WsClient) writePump() {
 	c.ticker = time.NewTicker(pingPeriod)
 	defer func() {
-		slog.Info("client disconnected writePump", slog.String("UID", c.UID.String()))
+		slog.Debug("client disconnected writePump", slog.String("UID", c.UID.String()))
 		c.ticker.Stop()
 		c.conn.Close()
 	}()
@@ -413,7 +507,7 @@ func (c *WsClient) writePump() {
 		case message, ok := <-c.send:
 			if !ok {
 				// The channel is closed
-				slog.Error("channel closed from unsubscribe event", slog.String("UID:", c.UID.String()))
+				slog.Error("channel closed from unsubscribe event")
 				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{}) // best effort, the connection is closed anyway
 				return
 			}
@@ -421,13 +515,13 @@ func (c *WsClient) writePump() {
 			err = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
 				// There is no deadline set, so the connection is dead
-				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+				slog.Error("not possible to write deadliner", slog.String("error", err.Error()))
 				return
 			}
 
 			err = c.conn.WriteMessage(message.MsgType, message.Data)
 			if err != nil {
-				slog.Error("not possible to write message", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+				slog.Error("not possible to write message", slog.String("error", err.Error()))
 
 				return
 			}
@@ -436,7 +530,7 @@ func (c *WsClient) writePump() {
 			err = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err != nil {
 				// There is no deadline set, so the connection is dead
-				slog.Error("not possible to write deadliner", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+				slog.Error("not possible to write deadliner", slog.String("error", err.Error()))
 				return
 			}
 
@@ -444,12 +538,22 @@ func (c *WsClient) writePump() {
 
 			err = c.conn.WriteMessage(websocket.PingMessage, nil)
 			if err != nil {
-				slog.Error("not possible to write Ping message", slog.String("error", err.Error()), slog.String("UID:", c.UID.String()))
+				slog.Error("not possible to write Ping message", slog.String("error", err.Error()))
 
 				return
 			}
 		}
 	}
+}
+
+// marshalWs builds a WebSocket frame {type, data}.
+func marshalWs(msgType domain.WsMessageType, data any) ([]byte, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(domain.WsMessage{Type: string(msgType), Data: raw})
 }
 
 func unmarshalWs[T any](data json.RawMessage) (T, bool) {
@@ -491,6 +595,7 @@ func (c *WsClient) sendPushNotification(peerID uuid.UUID) {
 		VAPIDPublicKey:  vapid.Keys().PublicKey,
 		VAPIDPrivateKey: vapid.Keys().PrivateKey,
 		TTL:             30,
+		HTTPClient:      vapid.HTTPClient(), // refuses internal addresses
 	}
 
 	resp, err := webpush.SendNotification(body, sub, &option)
@@ -501,4 +606,27 @@ func (c *WsClient) sendPushNotification(peerID uuid.UUID) {
 	}
 
 	defer resp.Body.Close()
+}
+
+// allowFrame applies the rate limits of the connection and of its IP. Dropped frames count as
+// violations; too many of them close the connection.
+func (c *WsClient) allowFrame(msgType domain.WsMessageType) bool {
+	now := time.Now()
+	cfg := c.limits.cfg
+
+	ok := true
+	switch msgType {
+	case domain.WsTypeMessage:
+		ok = c.connLimits.messages.allow(now, cfg.MessagesPerSecond, float64(cfg.MessageBurst), 1) &&
+			c.limits.AllowMessageIP(c.ip)
+	case domain.WsTypeJoinRoom, domain.WsTypeCreateRoom, domain.WsTypeLeaveRoom, domain.WsTypeSubscribePush:
+		ok = c.connLimits.joins.allow(now, cfg.JoinsPerSecond, cfg.JoinsPerSecond*5, 1)
+	}
+
+	if !ok {
+		c.connLimits.violations++
+		slog.Debug("frame dropped, rate limit", slog.String("type", string(msgType)))
+	}
+
+	return ok
 }

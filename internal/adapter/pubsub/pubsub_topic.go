@@ -92,20 +92,8 @@ func (at *AdapterTopic[U, T]) SubscribeWithID(subID, topic U, update func(obj T)
 		return output, ErrAlreadyClosed
 	}
 
-	subsCount := 0
-	for _, sub := range at.subs {
-		subsT, err := sub.Subscribers()
-		if err != nil {
-			return output, err
-		}
-
-		subsCount += len(subsT)
-	}
-
-	if subsCount >= at.MaxSubscribers {
-		return output, ErrMaxSub
-	}
-
+	// MaxSubscribers is a limit per topic (checked by the topic adapter), not for all topics
+	// together — a global limit would let a few connections block the whole server.
 	subs, ok := at.subs[topic]
 	if !ok {
 		subs = at.newTopicAdapter()
@@ -127,20 +115,8 @@ func (at *AdapterTopic[U, T]) Subscribe(topic U, update func(obj T)) (U, error) 
 		return output, ErrAlreadyClosed
 	}
 
-	subsCount := 0
-	for _, sub := range at.subs {
-		subsT, err := sub.Subscribers()
-		if err != nil {
-			return output, err
-		}
-
-		subsCount += len(subsT)
-	}
-
-	if subsCount >= at.MaxSubscribers {
-		return output, ErrMaxSub
-	}
-
+	// MaxSubscribers is a limit per topic (checked by the topic adapter), not for all topics
+	// together — a global limit would let a few connections block the whole server.
 	subs, ok := at.subs[topic]
 	if !ok {
 		subs = at.newTopicAdapter()

@@ -5,6 +5,7 @@ import {Events} from "./event.js";
 export class Page {
     constructor(events) {
         this._events = events;
+        this._loading = 0; // incremented per page change — an older, slower load is dropped
     }
 
     async init() {
@@ -15,6 +16,7 @@ export class Page {
 
 
     async setPage(pageName){
+        const loading = ++this._loading;
         window.history.pushState({}, "", "/" + pageName);
 
         const responseHeader = await fetch("assets/view/" + pageName + "_header.html");
@@ -22,6 +24,9 @@ export class Page {
 
         const responseContent = await fetch("assets/view/" + pageName + "_content.html");
         const htmlStringContent = await responseContent.text()
+
+        // A newer page change was started meanwhile (e.g. a double tap)
+        if (loading !== this._loading) return;
 
         document.getElementById('appContent').innerHTML = htmlStringContent;
         document.getElementById('appHeader').innerHTML = htmlStringHeader;

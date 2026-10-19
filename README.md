@@ -33,7 +33,10 @@ or QR code that carries the room key.
   the QR code can also be scanned with the native camera app and pasted
 - **Fast QR scanner** — native `BarcodeDetector` where available, zxing-cpp (WebAssembly) on iOS and Firefox
 - **Images** — encrypted, chunked upload over the WebSocket with retry
-- **Expiring messages** — per-room TTL; the server keeps messages for at most 30 days and files for 7 days
+- **Self-deleting messages** — every room has a maximum TTL that is set once when it is created and
+  enforced by the server; single messages can be sent with a shorter TTL. Expired messages are
+  deleted on the server and on every device (checked every minute), the remaining time is shown
+  on each message. Images and other files live exactly as long as their message (at most 30 days).
 - **Offline-capable PWA** — installable, cached app shell, automatic update notice
 - **Web Push** — notifications for new messages (VAPID)
 - **Reliable connection** — automatic reconnect with exponential backoff, outbox for messages sent while offline
@@ -135,6 +138,36 @@ golangci-lint run      # config in .golangci.yml
 | `VAPID_PUBLIC_KEY`  | Web Push public key. Must be set together with `VAPID_PRIVATE_KEY`.   | read from `vapid.json`   |
 | `VAPID_PRIVATE_KEY` | Web Push private key. Must be set together with `VAPID_PUBLIC_KEY`.   | read from `vapid.json`   |
 | `IMAGE_TMP_DIR`     | Directory for uploaded (encrypted) files.                             | `./files`                |
+| `LOG_LEVEL`         | `debug`, `info`, `warn` or `error`. Client, room and message ids are only logged on `debug` — keep it off in production, logs are metadata. | `info` |
+
+### Limits
+
+Limits against abuse. The defaults are far above normal use; invalid values are logged and the
+default is used.
+
+| Variable                      | Description                                                              | Default |
+|-------------------------------|--------------------------------------------------------------------------|---------|
+| `MAX_CONNECTIONS`             | WebSocket connections in total                                           | `10000` |
+| `MAX_CONNECTIONS_PER_IP`      | WebSocket connections per IP                                             | `20`    |
+| `CONNECTS_PER_MINUTE_PER_IP`  | New connections per IP and minute (HTTP 429 above)                       | `30`    |
+| `TRUSTED_PROXIES`             | IPs/CIDRs of reverse proxies whose `X-Forwarded-For` is trusted (comma separated, `none` = no proxy). Without it all clients behind the proxy share one IP. | `127.0.0.1/8,::1/128` |
+| `MAX_ROOM_SUBSCRIBERS`        | Open connections per room                                                | `256`   |
+| `MESSAGES_PER_SECOND`         | Messages per connection and second                                       | `5`     |
+| `MESSAGE_BURST`               | Messages a connection may send at once before the rate applies           | `20`    |
+| `MESSAGES_PER_SECOND_PER_IP`  | Messages per IP and second                                               | `20`    |
+| `JOINS_PER_SECOND`            | Join / leave / create room / push subscription frames per connection and second | `2` |
+| `MAX_ROOMS_PER_JOIN`          | Rooms in one `join_rooms` frame (more are cut)                           | `200`   |
+| `ROOMS_PER_HOUR_PER_IP`       | New rooms per IP and hour                                                | `10`    |
+| `ROOM_IDLE_DAYS`              | A room (with its member list) is deleted when nothing happened for its message TTL plus this many days | `30` |
+| `MAX_UPLOADS_PER_CONNECTION`  | Parallel file uploads per connection                                     | `2`     |
+| `UPLOAD_MB_PER_HOUR_PER_IP`   | Uploaded MB per IP and hour                                              | `500`   |
+| `MAX_FILE_SIZE_MB`            | Largest file (encrypted size)                                            | `25`    |
+| `MIN_FREE_DISK_MB`            | Uploads are refused when less disk space would be left                   | `1024`  |
+| `PUSH_INTERVAL_SECONDS`       | At most one push per device in this interval — a burst of messages gives one notification | `30` |
+
+A client that keeps sending above the message or join rate is disconnected after 100 dropped frames.
+Push subscriptions are only accepted for the push services of the browsers (Google, Apple, Mozilla,
+Microsoft), and push requests never go to private or local addresses.
 
 VAPID keys are resolved in this order: environment variables → `vapid.json` in the working
 directory → a newly generated pair, which is then saved to `vapid.json`. Keep the keys stable:
@@ -182,18 +215,34 @@ Run ChatBit behind a reverse proxy that terminates TLS and forwards WebSocket up
 Example for nginx:
 
 ```nginx
-location / {
-    proxy_pass http://127.0.0.1:8081;
-}
+# First line of defense, ChatBit checks its own limits as well
+limit_req_zone  $binary_remote_addr zone=chatbit_ws:10m rate=30r/m;
+limit_conn_zone $binary_remote_addr zone=chatbit_conn:10m;
 
-location /ws {
-    proxy_pass http://127.0.0.1:8081;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 1h;
+server {
+    # No access log: it would record IP, time and path of every client
+    access_log off;
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+    }
+
+    location /ws {
+        limit_req  zone=chatbit_ws burst=10 nodelay;
+        limit_conn chatbit_conn 20;
+
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 1h;
+    }
 }
 ```
+
+If the proxy runs on another host or in another container, set `TRUSTED_PROXIES` to its address
+(e.g. the Docker network `172.16.0.0/12`), otherwise all clients count as one IP.
 
 ### Updates
 
@@ -233,9 +282,11 @@ All frames on `/ws` are JSON with a `type` field; file chunks are sent as binary
 
 | Type               | Direction        | Purpose                                         |
 |--------------------|------------------|-------------------------------------------------|
-| `join_rooms`       | client → server  | subscribe to rooms, request missed messages     |
+| `hello`            | client → server  | first frame of every connection: `{clientUid}` (not in the URL, so it is not in proxy logs) |
+| `join_rooms`       | client → server  | subscribe to rooms, request missed messages; the TTL is only used when the room is created |
+| `room_info`        | server → client  | TTL in force for a joined room                  |
 | `leave_rooms`      | client → server  | unsubscribe from rooms                          |
-| `create_room`      | client → server  | register a new room                             |
+| `create_room`      | client → server  | register a new room (never overwrites an existing one) |
 | `message`          | both             | encrypted message                               |
 | `sub_push`         | client → server  | store a web push subscription                   |
 | `transfer_start`   | client → server  | start a chunked file upload                     |
@@ -245,8 +296,11 @@ All frames on `/ws` are JSON with a `type` field; file chunks are sent as binary
 
 ## Security Notes
 
-- The server only handles ciphertext, but it does see metadata: room ids, timestamps,
-  message sizes and which client is in which room.
+- The server only handles ciphertext, but it does see metadata: room ids, timestamps and which
+  client is in which room. Messages, aliases and images are padded before encryption, so their
+  size reveals little; the image type is encrypted as well. A shorter message TTL can only be one
+  of a few fixed steps, so it does not mark the messages of one person.
+- Messages and files can not be overwritten: the server only accepts ids that do not exist yet.
 - **Whoever has an invite code has the room key.** Share codes over a trusted channel and use a
   PIN when the channel is not trusted. Invite codes do not expire, and a member who has joined
   keeps the key — there is no key rotation yet.
@@ -258,8 +312,8 @@ All frames on `/ws` are JSON with a `type` field; file chunks are sent as binary
 - [ ] Online / offline status of users
 - [ ] Expiring and one-time invite codes (server-side invite token with TTL)
 - [ ] Room key rotation
-- [ ] Server-side message timestamps
 - [ ] Configurable listen port
+- [ ] Room access proof (only clients with the room key can join) and session ids instead of a fixed client id
 
 ## License
 

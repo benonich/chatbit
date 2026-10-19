@@ -746,13 +746,16 @@ var checkDarkModeStatus = localStorage.getItem("ChatbitDarkMode");
 var switchDarkMode = document.querySelectorAll(".dark-mode-switch");
 var pageBodyActive = pageBody.classList.contains("dark-mode-active");
 
-// Check if enable as default
-if (Chatbit.Dark_Mode.default) {
+// Check if enable as default — a choice saved in the settings ("1" dark / "0" light) wins
+if (checkDarkModeStatus === "0") {
+    pageBody.classList.remove("dark-mode-active");
+}
+else if (checkDarkModeStatus === "1" || Chatbit.Dark_Mode.default) {
     pageBody.classList.add("dark-mode-active");
 }
 
 // Night Mode
-if (Chatbit.Dark_Mode.night_mode.enable) {
+if (Chatbit.Dark_Mode.night_mode.enable && checkDarkModeStatus === null) {
     var nightStart = Chatbit.Dark_Mode.night_mode.start_time;
     var nightEnd = Chatbit.Dark_Mode.night_mode.end_time;
     var currentDate = new Date();
@@ -764,7 +767,7 @@ if (Chatbit.Dark_Mode.night_mode.enable) {
 }
 
 // Auto Detect Dark Mode
-if (Chatbit.Dark_Mode.auto_detect.enable)
+if (Chatbit.Dark_Mode.auto_detect.enable && checkDarkModeStatus === null)
     if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
         pageBody.classList.add("dark-mode-active");
     }
@@ -787,6 +790,13 @@ if (checkDarkModeStatus === 1 || checkDarkModeStatus === "1" || pageBody.classLi
 else {
     switchDarkModeCheck(false);
 }
+// Browser / status bar color (Android, desktop PWA) follows the theme
+function applyThemeColor() {
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", pageBody.classList.contains("dark-mode-active") ? "#000000" : "#F9F9F9");
+}
+applyThemeColor();
+
 switchDarkMode.forEach(function (el) {
     el.addEventListener("click", function () {
         var darkmodeCheck = localStorage.getItem("ChatbitDarkMode");

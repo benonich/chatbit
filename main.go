@@ -7,9 +7,8 @@ import (
 	"chatbit/internal/port"
 	"log/slog"
 	"os"
+	"time"
 )
-
-const MaxMessageTTL = 60 * 60 * 24 * 30
 
 // Injected at build time via -ldflags (see Taskfile.yml)
 var (
@@ -22,7 +21,13 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	slog.SetLogLoggerLevel(slog.LevelDebug)
+	slog.SetLogLoggerLevel(logLevel())
+
+	// Without a build date (go run, go build without the Taskfile) the start time is used.
+	// It names the service worker cache, so the clients get an update after every restart.
+	if buildDate == "unknown" {
+		buildDate = time.Now().UTC().Format(time.RFC3339)
+	}
 
 	app := core.NewApplication()
 
@@ -30,11 +35,9 @@ func main() {
 
 	logger.Info("ChatBit start")
 
-	// Store every message, capped to MaxMessageTTL
+	// Store every message; the TTL was already replaced with the room TTL by the WebSocket client
 	_, err := app.PS.Message.Subscribe(func(obj domain.Message) {
-		if obj.TTL > MaxMessageTTL || obj.TTL <= 0 {
-			obj.TTL = MaxMessageTTL
-		}
+		obj.TTL = domain.ClampTTL(obj.TTL)
 
 		err := app.DB.Message.AddWithTTL(obj, obj.TTL)
 		if err != nil {
@@ -59,4 +62,16 @@ func main() {
 		os.Exit(1)
 	}
 
+}
+
+// logLevel reads LOG_LEVEL (debug, info, warn, error; default info). Client, room and message
+// ids are only logged on debug — keep it off in production, logs are metadata.
+func logLevel() slog.Level {
+	var level slog.Level
+	err := level.UnmarshalText([]byte(os.Getenv("LOG_LEVEL")))
+	if err != nil {
+		return slog.LevelInfo
+	}
+
+	return level
 }

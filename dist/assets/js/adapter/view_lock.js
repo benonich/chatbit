@@ -19,7 +19,6 @@ export class ViewLock {
 
     async setAliasName(){
         const profile = await this._db.getProfile();
-        console.log("Setting alias name to:", profile.name);
         document.getElementById('ls_alias').textContent = profile.name;
     }
 

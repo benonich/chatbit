@@ -4,6 +4,7 @@ import {Room} from "../domain/room.js";
 import {Notifications} from "./notification.js";
 import {Modals} from "./modal.js";
 import {InviteCode, InviteError} from "./invite.js";
+import {idHue} from "./color.js";
 
 // Home page: room list, creating new rooms and joining rooms via invite code or QR code.
 class ViewHome {
@@ -14,16 +15,51 @@ class ViewHome {
         this._keyStore = keyStore;
         this._qrScanner = qrScanner;
         this._invite = new InviteCode(aes);
+        this._roomListRender = 0; // incremented per showRooms() call
     }
 
     init() {
         console.log("View Home init");
 
+        // Keep the unread badges up to date while the room list is visible. Debounced, because
+        // after a reconnect the missed messages arrive in a burst.
+        const refreshBadges = () => {
+            if (!this._onHomePage) return;
+            clearTimeout(this._badgeTimer);
+            this._badgeTimer = setTimeout(() => this._updateUnreadBadges(), 300);
+        };
+        this._events.on(Events.CHAT.MESSAGE_STORED, refreshBadges);
+        this._events.on(Events.CHAT.MESSAGES_EXPIRED, refreshBadges);
+
+        this._events.on(Events.PROFILE.OPEN, async () => {
+            const profile = await this._db.getProfile();
+            document.getElementById("in_settings_alias").value = profile.name ?? "";
+        });
+
+        this._events.on(Events.PROFILE.SAVE, async () => {
+            await this._saveProfile();
+        });
+
+        this._events.on(Events.APP.UPDATE, () => {
+            this._updateApp().catch(err => {
+                console.error("App update failed:", err);
+                this._events.emit(Notifications.DANGER, {header: "Update", msg: "Update check failed. Are you online?"});
+            });
+        });
+
         this._events.on(Events.STATE.PAGE, async (pageName) => {
             // Safety net: never keep the camera running after the page changed
             this._qrScanner.Stop();
 
+            this._onHomePage = pageName === Pages.HOME;
+
             if (pageName === Pages.HOME) {
+                await this._showAlias();
+
+                const version = document.querySelector('meta[name="app-version"]')?.content;
+                const versionEl = document.getElementById("in_app_version");
+                if (versionEl && version) versionEl.textContent = version;
+
                 console.log("View Home Page");
 
                 await this.showRooms();
@@ -174,7 +210,8 @@ class ViewHome {
         })
 
         // send join room request to server over WS
-        this._events.emit(Events.WS.JOIN_ROOM, {id: newRoom.id, notification: newRoom.pushNotifications});
+        // The TTL is only taken by the server when it creates the room — it can not be changed later
+        this._events.emit(Events.WS.JOIN_ROOM, {id: newRoom.id, notification: newRoom.pushNotifications, ttl: newRoom.ttl});
 
         // store new room in the database
         await this._db.addRoom(newRoom);
@@ -193,32 +230,112 @@ class ViewHome {
         bootstrap.Modal.getInstance(document.getElementById("in_new_room"))?.hide();
     }
 
+    // Alias in the profile box of the menu
+    async _showAlias() {
+        const el = document.getElementById("in_alias");
+        if (!el) return;
+        const profile = await this._db.getProfile();
+        el.textContent = profile.name ?? "";
+    }
+
+    // New alias: used for the messages sent from now on (sent messages keep the old one)
+    async _saveProfile() {
+        const name = document.getElementById("in_settings_alias").value.trim();
+        if (!name) {
+            this._events.emit(Notifications.WARNING, {header: "Profile", msg: "The alias must not be empty."});
+            return;
+        }
+
+        await this._db.updateProfileName(name);
+        await this._showAlias();
+
+        bootstrap.Modal.getInstance(document.getElementById("in_user_settings"))?.hide();
+        this._events.emit(Notifications.INFO, {header: "Profile", msg: "Alias saved."});
+    }
+
+    // Looks for a new service worker version; if there is one, waits until it is active
+    // and reloads the page with it.
+    async _updateApp() {
+        const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+        if (!reg) {
+            location.reload();
+            return;
+        }
+
+        this._events.emit(Notifications.INFO, {header: "Update", msg: "Checking for a new version..."});
+        await reg.update();
+
+        const sw = reg.installing || reg.waiting;
+        if (!sw) {
+            this._events.emit(Notifications.INFO, {header: "Update", msg: "ChatBit is up to date."});
+            return;
+        }
+
+        await new Promise(resolve => {
+            const done = () => sw.state === "activated" || sw.state === "redundant";
+            if (done()) return resolve();
+            sw.addEventListener("statechange", () => { if (done()) resolve(); });
+            // A worker that waits for old tabs to close is activated right away
+            if (sw.state === "installed") sw.postMessage({type: "SKIP_WAITING"});
+        });
+
+        location.reload();
+    }
+
     // -------------------------------------------------------------------------
     // HTML rendering
     // -------------------------------------------------------------------------
 
+    // Builds the whole list first and replaces it in one step: decrypting is async, and two
+    // overlapping calls (e.g. fast page changes) would otherwise both append their rooms.
     async showRooms() {
-        document.getElementById('id_room_list').innerHTML = '';
-
+        const render = ++this._roomListRender;
         const rooms = await this._db.getRooms();
 
+        let html = "";
         for (const room of rooms) {
-            console.log("Room:", room);
-
             const name = await this._aes.decrypt(room.name, this._keyStore.getMasterKey());
+            html += `
+                <li>
+                    <a href="#" data-action="room:open_room" data-body="${room.id}" class="item col">
+                        <div class="icon-box room-color" style="--room-hue: ${idHue(room.id)}">
+                            <ion-icon name="chatbubble-ellipses-outline" class="md hydrated"></ion-icon>
+                        </div>
+                        <div class="in">
+                            <div>${escapeHTML(name)}</div>
+                        </div>
+                        <span class="badge badge-danger unread-badge" data-unread-room="${room.id}" hidden></span>
+                    </a>
+                </li>`;
+        }
 
-            document.getElementById('id_room_list').insertAdjacentHTML('beforeend', "    <li>\n" +
-                "                        <a href=\"#\" data-action=\"room:open_room\" data-body=\"" + room.id + "\" class=\"item col\">\n" +
-                "                    <div class=\"icon-box bg-primary\">\n" +
-                "                        <ion-icon name=\"chatbubble-ellipses-outline\" class=\"md hydrated\"></ion-icon>\n" +
-                "                    </div>" +
-                "                    <div class=\"in\">" +
-                "                            <div>" + name + "</div>\n" +
-                "                    </div>\n" +
-                // "                    <span class=\"badge badge-danger\">0</span>" +
-                "                        </a>\n" +
-                "                    </li>");
+        if (render !== this._roomListRender) return; // a newer call renders the list
+        const list = document.getElementById('id_room_list');
+        if (!list) return; // page changed meanwhile
+        list.innerHTML = html;
+
+        await this._updateUnreadBadges(rooms);
+    }
+
+    // Shows the number of unread messages next to every room ("99+" above 99)
+    async _updateUnreadBadges(rooms) {
+        rooms = rooms ?? await this._db.getRooms();
+
+        for (const room of rooms) {
+            const badge = document.querySelector(`[data-unread-room="${room.id}"]`);
+            if (!badge) continue;
+
+            const count = await this._db.countUnread(room.id, room.lastRead);
+            badge.textContent = count > 99 ? "99+" : String(count);
+            badge.hidden = count === 0;
         }
     }
 }
+// The room name comes from the invite code of another user — never insert it as HTML
+function escapeHTML(str) {
+    const el = document.createElement("div");
+    el.textContent = str ?? "";
+    return el.innerHTML;
+}
+
 export default ViewHome

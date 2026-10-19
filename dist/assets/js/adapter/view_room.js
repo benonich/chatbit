@@ -1,10 +1,13 @@
 import {Events} from "./event.js";
 import {Pages} from "./page.js";
 import {Message} from "../domain/message.js";
-import {File} from "../domain/file.js";
+import {File, formatBytes} from "../domain/file.js";
 import {Modals} from "./modal.js";
 import {Room} from "../domain/room.js";
 import {InviteCode} from "./invite.js";
+import {formatDuration, formatTTL, MESSAGE_TTL_STEPS, snapTTL} from "./expiry.js";
+import {idHue} from "./color.js";
+import {Notifications} from "./notification.js";
 
 const CHUNK_SIZE = 64 * 1024; // 64KB
 
@@ -21,9 +24,14 @@ export class ViewRoom {
         this._roomId = null;
         this._roomTimestamp = null;
         this._roomKey = null;
-        this._roomTTL = null;
+        this._roomTTL = null;     // maximum TTL of the room (seconds), fixed when the room was created
+        this._sendTTL = 0;        // TTL of own messages (edit dialog "My messages"), 0 = room TTL
         this._roomName = null;
         this._roomStore = null;
+        this._onRoomPage = false; // messages are only marked as read while the room is visible
+        this._messageLoad = 0;    // incremented per message load of the room page
+        this._shareFile = null; // image of the image modal, prepared for CHAT.SHARE_IMAGE
+        this._shareUrl = null;
         this._roomNotification = null;
 
         this._alias = null;
@@ -40,18 +48,17 @@ export class ViewRoom {
                 const aliasId = await this._aes.decrypt(msg.aliasId, this._roomKey);
 
                 console.log(msg);
-                console.log(aliasId);
                 if (aliasId === this._aliasId){
                     console.log("Own message received");
 
                     this._updateStatusHTML(msg);
+                    this._markRead(msg.timestamp); // the server timestamp may be newer than the local one
                 }else{
                     console.log("Message received from WS");
                     await this._newMessage(msg);
                 }
 
-                const el = document.getElementById("ct_room");
-                el.scrollTop = el.scrollHeight;
+                this._scrollToBottom();
             }
         });
 
@@ -71,6 +78,19 @@ export class ViewRoom {
             await this.sendFile();
         });
 
+        this._events.on(Events.CHAT.SEND_DOCUMENT, async () => {
+            await this.sendDocument();
+        });
+
+        this._events.on(Events.CHAT.OPEN_FILE, async (fileId) => {
+            try {
+                await this._downloadDocument(fileId);
+            } catch (error) {
+                console.error(`Failed to load file ${fileId}:`, error.message);
+                this._events.emit(Notifications.WARNING, {header: "Document", msg: "The document could not be loaded."});
+            }
+        });
+
         this._events.on(Events.CHAT.OPEN_IMAGE, async (fileId) => {
             console.log(`Open File with ID: ${fileId}`);
 
@@ -88,6 +108,11 @@ export class ViewRoom {
 
         });
 
+
+        // Must stay synchronous up to navigator.share(): iOS only allows sharing in the click itself
+        this._events.on(Events.CHAT.SHARE_IMAGE, () => {
+            this._shareImage();
+        });
 
         this._events.on(Events.CHAT.EDIT_ACTIVE_ROOM, async (msg) => {
             console.log("Edit Active Room");
@@ -134,19 +159,35 @@ export class ViewRoom {
             this._events.emit(Events.STATE.ROOM, roomId);
         })
 
+        // The server sends the TTL in force after every join — new messages use it
+        this._events.on(Events.WS.ROOM_INFO, (info) => {
+            if (info.id !== this._roomId) return;
+            this._roomTTL = info.ttl;
+            this._renderRoomTTL();
+        });
+
+        // Delete time chosen in the timer menu of the chat footer
+        // Expired messages were deleted from the database — remove them from the chat as well
+        this._events.on(Events.CHAT.MESSAGES_EXPIRED, (expired) => {
+            for (const m of expired) {
+                if (m.roomId === this._roomId) this._removeMessageHTML(m.id);
+            }
+        });
+
+        this._events.on(Events.CHAT.TICK, (now) => this._updateRemainingTimes(now));
+
         this._events.on(Events.STATE.ROOM, async (roomId) => {
             console.log("View Room", roomId);
 
             this._roomId = roomId;
             this._roomKey = await this._keyStore.getRoomKey(roomId);
 
-            console.log("Room Key:", this._roomKey);
 
             const room = await this._db.getRoom(roomId);
 
             console.log("Get Room from DB");
-            console.log(room);
             this._roomTTL   = room.ttl;
+            this._sendTTL   = this._clampSendTTL(room.messageTTL || 0); // older free values → step
             this._roomStore = room.store;
             this._roomNotification = room.pushNotifications;
             this._roomName = await this._aes.decrypt(room.name, this._keyStore.getMasterKey());
@@ -168,14 +209,28 @@ export class ViewRoom {
         });
 
         this._events.on(Events.STATE.PAGE, async (pageName) => {
+            this._onRoomPage = pageName === Pages.ROOM;
+
             if(pageName === Pages.ROOM){
                 console.log("View Room Page");
 
-                document.getElementById('ro_room_name').innerHTML = this._roomName;
+                // textContent: the room name comes from the invite code of another user
+                document.getElementById('ro_room_name').textContent = this._roomName;
+
+                // Header bar, status bar area and footer buttons in the color of the room
+                // (same as its bubble in the room list)
+                const hue = idHue(this._roomId);
+                const header = document.querySelector('#appHeader .appHeader');
+                header.classList.add('room-color');
+                header.style.setProperty('--room-hue', hue);
+                document.getElementById('appContent').style.setProperty('--room-hue', hue);
+                this._renderRoomTTL();
 
                 this._cleanActiveRoom();
 
-                await this._getLatestMessages();
+                const loaded = await this._getLatestMessages();
+                if (!loaded) return; // a newer load of the room page took over
+                this._scrollToBottom();
             }
         });
     }
@@ -185,9 +240,10 @@ export class ViewRoom {
 
         const roomName = modalEl.querySelector('input[name="room_name"]');
         const roomNotification = modalEl.querySelector('input[name="room_notification"]');
-        const roomDeleteAfter = modalEl.querySelector('input[name="room_delete_after"]');
-        const roomDeleteAfterUnit = modalEl.querySelector('select[name="room_delete_after_unit"]');
         const roomStore = modalEl.querySelector('input[name="room_store"]');
+        const messageTTL = modalEl.querySelector('select[name="message_ttl"]');
+
+        this._sendTTL = this._clampSendTTL(Number(messageTTL.value) || 0);
 
         const updateRoom = new Room({
             id: this._roomId,
@@ -195,7 +251,8 @@ export class ViewRoom {
             key: await this._aes.encrypt(await this._aes.exportKey(this._roomKey), this._keyStore.getMasterKey()),
             pushNotifications: roomNotification.checked,
             store: roomStore.checked,
-            ttl: roomDeleteAfter.value * roomDeleteAfterUnit.value
+            ttl: this._roomTTL, // fixed since the room was created, the server ignores any other value
+            messageTTL: this._sendTTL
         })
 
         console.log(updateRoom);
@@ -210,26 +267,22 @@ export class ViewRoom {
 
         const roomName = modalEl.querySelector('input[name="room_name"]');
         const roomNotification = modalEl.querySelector('input[name="room_notification"]');
-        const roomDeleteAfter = modalEl.querySelector('input[name="room_delete_after"]');
-        const roomDeleteAfterUnit = modalEl.querySelector('select[name="room_delete_after_unit"]');
+        const roomMaxTTL = modalEl.querySelector('[data-field="room_max_ttl"]');
+        const messageTTL = modalEl.querySelector('select[name="message_ttl"]');
         const roomStore = modalEl.querySelector('input[name="room_store"]');
 
         roomName.value = this._roomName;
         roomNotification.checked = this._roomNotification;
         roomStore.checked = this._roomStore;
 
-        if(roomStore.checked){
-            if (this._roomTTL > 86400){
-                roomDeleteAfter.value = this._roomTTL / 86400;
-                roomDeleteAfterUnit.value = 86400;
-            }else if (this._roomTTL > 3600) {
-                roomDeleteAfter.value = this._roomTTL / 3600;
-                roomDeleteAfterUnit.value = 3600;
-            }else{
-                roomDeleteAfter.value = this._roomTTL  / 60;
-                roomDeleteAfterUnit.value = 60;
-            }
-        }
+        roomMaxTTL.textContent = formatTTL(this._effectiveRoomTTL());
+
+        // Room maximum plus every fixed step that is shorter
+        const roomTTL = this._effectiveRoomTTL();
+        messageTTL.innerHTML = `<option value="0">Room maximum (${formatTTL(roomTTL)})</option>` +
+            MESSAGE_TTL_STEPS.filter(s => s < roomTTL)
+                .map(s => `<option value="${s}">${formatTTL(s)}</option>`).join("");
+        messageTTL.value = String(this._sendTTL || 0);
     }
 
     // Invite code of the open room, encrypted with the PIN if one is given
@@ -305,61 +358,72 @@ export class ViewRoom {
     }
 
     async sendFile() {
-        let f = document.getElementById("ct_img_input");
+        const input = document.getElementById("ct_img_input");
+        if (input.files.length === 0) return;
 
-        // ignore empty messages
-        if(f.files.length === 0){
-            return
+        const file = await this.limitToHD(input.files[0]);
+        input.value = ""; // the same file can be chosen again
+
+        // Type and size of the image that is sent (after scaling), shown in the bubble
+        const content = JSON.stringify({type: file.type, size: file.size});
+        await this._sendFileMessage(file, Message.TYPE_IMAGE, await this._aes.encryptPadded(content, this._roomKey));
+    }
+
+    // Any file (PDF, Word, ...). Name and size are sent encrypted in the message content,
+    // so the bubble can show them before the file itself is downloaded.
+    async sendDocument() {
+        const input = document.getElementById("ct_doc_input");
+        if (input.files.length === 0) return;
+
+        const file = input.files[0];
+        input.value = "";
+
+        const content = JSON.stringify({name: file.name.slice(0, 200), size: file.size});
+        await this._sendFileMessage(file, Message.TYPE_FILE, await this._aes.encryptPadded(content, this._roomKey));
+    }
+
+    // Encrypts the file, stores it locally and sends the message plus the file chunks
+    async _sendFileMessage(file, type, content) {
+        // Sizes of the encrypted (padded) data — that is what is sent
+        const blob = await this._aes.encryptFile(file, this._roomKey);
+        const totalChunks = Math.ceil(blob.byteLength / CHUNK_SIZE);
+
+        // Limit of the server (MAX_FILE_SIZE_MB) — it would reject the upload
+        const maxSize = Number(document.querySelector('meta[name="max-file-size"]')?.content) || 0;
+        if (maxSize > 0 && blob.byteLength > maxSize) {
+            this._events.emit(Notifications.WARNING, {
+                header: "File too large",
+                msg: `Files can be at most ${formatBytes(maxSize)} (this one: ${formatBytes(blob.byteLength)}).`,
+            });
+            return;
         }
 
-        const inputFile = f.files[0];
-
-        const file = await this.limitToHD(inputFile);
-
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-        let timeStamp = new Date();
-
-        let msg = new Message({
+        const msg = new Message({
             id: crypto.randomUUID(),
             roomId: this._roomId,
-            alias: await this._aes.encrypt(this._alias, this._roomKey),
-            aliasId: await this._aes.encrypt(this._aliasId, this._roomKey),
-            timestamp: timeStamp.getTime(),
-            type: Message.TYPE_IMAGE,
+            alias: await this._aes.encryptPadded(this._alias, this._roomKey),
+            aliasId: await this._aes.encryptPadded(this._aliasId, this._roomKey),
+            content: content,
+            timestamp: Date.now(),
+            type: type,
             synced: false,
             chunkSize: CHUNK_SIZE,
             chunksTotal: totalChunks,
-            ttl: this._roomTTL,
+            ttl: this._messageTTL(),
             store: this._roomStore
         });
 
-        let fileM = new File({
+        const fileM = new File({
             id: msg.id,
-            blob: await this._aes.encryptFile(file, this._roomKey),
+            blob: blob,
             roomId: this._roomId,
             chunkSize: CHUNK_SIZE,
             chunksTotal: totalChunks,
-            ttl: this._roomTTL,
+            ttl: this._messageTTL(),
             store: this._roomStore,
-            mimeType: file.type,
-            totalSize: file.size,
+            mimeType: "application/octet-stream", // the real type is inside the encrypted data
+            totalSize: blob.byteLength,
         });
-
-        //ws.transferStart(msg)
-
-        //await db.file.add({
-        //    id: msg.id,
-        //    room_id: room_id,
-        //    blob: fileEnc,
-        //    mime_type: file.type,
-        //    timestamp: timeStamp.getTime(),
-        //})
-
-        //await ws.sendFile(fileEnc, totalChunks, msg.id);
-
-
-        f.files = null;
 
         this._db.addFile(fileM);
         this._events.emit(Events.WS.SEND_FILE, fileM);
@@ -368,6 +432,31 @@ export class ViewRoom {
         this._events.emit(Events.WS.SEND_MESSAGE, msg);
     }
 
+    // Loads the document (from the device or the server), decrypts it and saves it under its
+    // original name. The browser shows its usual download; on iPhone it opens the preview,
+    // from where it can be saved to Files or opened in Word, a PDF viewer, ...
+    async _downloadDocument(fileId) {
+        // Documents can be much larger than images — give the download more time
+        const file = await this.getOrRequestFile(fileId, 120 * 1000);
+        const blob = await this._aes.decryptFileBlob(file.blob, file.mimeType, this._roomKey);
+
+        let name = "document";
+        const row = await this._db.getMessage(fileId);
+        if (row?.content) {
+            try {
+                name = JSON.parse(await this._aes.decrypt(row.content, this._roomKey)).name || name;
+            } catch { /* keep the generic name */ }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60 * 1000); // the download needs the URL a moment longer
+    }
 
     async getOrRequestFile(fileId, timeoutMs = 15000) {
         // 1. Fast path: file is already stored locally (saves network and event overhead)
@@ -387,22 +476,13 @@ export class ViewRoom {
                 this._events.off(Events.WS.RECEIVED_FILE, onDone);
             };
 
-            const onDone = async ({ fileId: incomingId, error }) => {
-                // Unpassende Events ignorieren
-                if (incomingId !== fileId) return;
+            // RECEIVED_FILE carries the assembled File (the database stores it in parallel)
+            const onDone = (file) => {
+                // Ignore transfers of other files
+                if (!file || file.id !== fileId) return;
 
                 cleanup();
-
-                if (error) {
-                    return reject(new Error(error));
-                }
-
-                try {
-                    const file = await this._db.getFile(fileId);
-                    resolve(file);
-                } catch (err) {
-                    reject(err);
-                }
+                resolve(file);
             };
 
             // The timeout prevents hanging promises and memory leaks
@@ -468,13 +548,13 @@ export class ViewRoom {
         let msg = new Message({
             id: crypto.randomUUID(),
             roomId: this._roomId,
-            alias: await this._aes.encrypt(this._alias, this._roomKey),
-            aliasId: await this._aes.encrypt(this._aliasId, this._roomKey),
-            content: await this._aes.encrypt(msgRaw, this._roomKey),
+            alias: await this._aes.encryptPadded(this._alias, this._roomKey),
+            aliasId: await this._aes.encryptPadded(this._aliasId, this._roomKey),
+            content: await this._aes.encryptPadded(msgRaw, this._roomKey),
             timestamp: timeStamp.getTime(),
             type: Message.TYPE_TEXT,
             synced: false,
-            ttl: this._roomTTL,
+            ttl: this._messageTTL(),
             store: this._roomStore
         });
 
@@ -495,10 +575,18 @@ export class ViewRoom {
         this._checkTimeDivider(msg);
 
         await this._renderMessage(msg);
+        this._markRead(msg.timestamp);
+    }
+
+    // Everything shown in the open room counts as read (unread badges on the home page)
+    _markRead(timestamp) {
+        if (!this._onRoomPage || !timestamp) return;
+        this._db.markRoomRead(this._roomId, timestamp)
+            .catch(err => console.error("Marking room as read failed:", err));
     }
 
     async _renderMessage(msg) {
-        if (msg.alias === undefined) {
+        if (msg.alias === undefined || msg.isExpired()) {
             return;
         }
 
@@ -509,7 +597,8 @@ export class ViewRoom {
 
         let content;
 
-        if (!msg.isImage()) {
+        // Text, or the {type, size} info of images and documents (older images have no content)
+        if (msg.content) {
             content = await this._aes.decrypt(msg.content, this._roomKey);
         }
 
@@ -517,15 +606,18 @@ export class ViewRoom {
         const bubble   = msg._renderBubble(content);
         const status   = isOwn ? msg._renderStatus() : '';
         const title    = !isOwn
-            ? `<div class="title" alias-id="${msg._escape(aliasId)}">${msg._escape(alias)}</div>`
+            ? `<div class="title alias-color" style="--alias-hue: ${idHue(aliasId)}" alias-id="${msg._escape(aliasId)}">${msg._escape(alias)}</div>`
             : '';
+
+        // Already shown (e.g. a message from the WebSocket arrived while the room was loading)
+        if (document.getElementById(msg.id)) return;
 
         document.getElementById('ct_room').insertAdjacentHTML('beforeend', `
         <div class="message-item${isOwn ? ' user' : ''}">
             <div id="${msg.id}" class="content">
                 ${title}
                 <div class="bubble text-line-break">${bubble}</div>
-                <div class="footer">${msg.formattedTime} ${status}</div>
+                <div class="footer">${msg.formattedTime} ${this._ttlHTML(msg)} ${status}</div>
             </div>
         </div>`);
     }
@@ -538,12 +630,28 @@ export class ViewRoom {
     }
 
     // request last x messages and render them
+    // Returns false if a newer load started meanwhile — rendering is async (decrypting), so two
+    // overlapping loads would otherwise both append their messages.
     async _getLatestMessages(){
+        const load = ++this._messageLoad;
         const messageArray = await this._db.getLatestMessages(this._roomId);
 
         for (const msg of messageArray) {
+            if (load !== this._messageLoad) return false;
             await this._newMessage(Message.fromDB(msg));
         }
+        return load === this._messageLoad;
+    }
+
+    // Jumps to the newest message. Again in the next frame, because the page may not be laid
+    // out yet right after it was opened (scrollHeight would still be 0).
+    _scrollToBottom() {
+        const scroll = () => {
+            const el = document.getElementById("ct_room");
+            if (el) el.scrollTop = el.scrollHeight;
+        };
+        scroll();
+        requestAnimationFrame(scroll);
     }
 
     // Returns the date divider HTML (call when date changes between messages)
@@ -560,15 +668,79 @@ export class ViewRoom {
     // Update synced status icon in existing DOM element
     _updateStatusHTML(msg) {
         const footer = $(`#${msg.id} .footer`);
-        footer.find('ion-icon').remove();
-        footer.append(msg.synced
-            ? '<ion-icon name="checkmark-done-outline"></ion-icon>'
-            : '<ion-icon name="checkmark-outline"></ion-icon>'
-        );
+        footer.find('ion-icon.msg-status').remove();
+        footer.append(msg._renderStatus());
+
+        // The server echo carries the TTL and timestamp in force
+        const ttl = document.querySelector(`[id="${msg.id}"] .msg-ttl`);
+        if (ttl) {
+            ttl.dataset.expires = msg.expiresAt;
+            this._updateRemainingTimes();
+        }
     }
 
+    // -------------------------------------------------------------------------
+    // Message TTL
+    // -------------------------------------------------------------------------
+
+    // Room TTL in seconds; unknown (0) means the maximum
+    _effectiveRoomTTL() {
+        return this._roomTTL > 0 ? Math.min(this._roomTTL, Message.MAX_TTL) : Message.MAX_TTL;
+    }
+
+    // 0 if the TTL is not shorter than the room maximum (= use the room maximum), otherwise one
+    // of the fixed steps (older free values are rounded down like the server does)
+    _clampSendTTL(ttl) {
+        return ttl > 0 && ttl < this._effectiveRoomTTL() ? snapTTL(ttl) : 0;
+    }
+
+    // TTL of the next message: the chosen one, but never longer than the room TTL
+    _messageTTL() {
+        const roomTTL = this._effectiveRoomTTL();
+        return this._sendTTL > 0 ? Math.min(this._sendTTL, roomTTL) : roomTTL;
+    }
+
+    _ttlHTML(msg) {
+        const remaining = Math.max(0, Math.round((msg.expiresAt - Date.now()) / 1000));
+        return `<span class="msg-ttl" data-expires="${msg.expiresAt}" title="Deleted on ${new Date(msg.expiresAt).toLocaleString()}">` +
+            `<ion-icon name="timer-outline"></ion-icon> ${formatDuration(remaining)}</span>`;
+    }
+
+    // Updates the remaining time of every message; removes the ones that just expired
+    _updateRemainingTimes(now = Date.now()) {
+        document.querySelectorAll('#ct_room .msg-ttl[data-expires]').forEach(el => {
+            const expires = Number(el.dataset.expires);
+            if (expires <= now) {
+                this._removeMessageHTML(el.closest('.content').id);
+                return;
+            }
+            el.title = `Deleted on ${new Date(expires).toLocaleString()}`;
+            el.innerHTML = `<ion-icon name="timer-outline"></ion-icon> ${formatDuration(Math.round((expires - now) / 1000))}`;
+        });
+    }
+
+    _removeMessageHTML(messageId) {
+        const content = document.getElementById(messageId);
+        if (!content) return;
+        content.closest('.message-item').remove();
+
+        // Remove date dividers that have no messages left
+        document.querySelectorAll('#ct_room .message-divider').forEach(divider => {
+            const next = divider.nextElementSibling;
+            if (!next || next.classList.contains('message-divider')) divider.remove();
+        });
+    }
+
+    // Room TTL under the room name, e.g. "⏱ max 1 h"
+    _renderRoomTTL() {
+        const el = document.getElementById('ro_room_ttl');
+        if (el) el.innerHTML = `<ion-icon name="timer-outline"></ion-icon> max ${formatTTL(this._effectiveRoomTTL())}`;
+    }
+
+
     async showImageModal(file) {
-        const url = await this._aes.decryptFile(file.blob, file.mimeType, this._roomKey);
+        const blob = await this._aes.decryptFileBlob(file.blob, file.mimeType, this._roomKey);
+        const url = URL.createObjectURL(blob);
 
         const img = document.querySelector('#ct_image img');
 
@@ -577,43 +749,48 @@ export class ViewRoom {
         img.src = url;
         img.dataset.objectUrl = url;
 
-        $("#ct_image").modal('show');
+        // Prepared before the click: iOS only allows navigator.share() directly in the click
+        // handler — an await (e.g. fetching the image first) loses the user gesture.
+        // window.File: "File" in this module is the domain class.
+        this._shareFile = new window.File([blob], imageFileName(blob.type), { type: blob.type });
+        this._shareUrl = url;
 
-        document.getElementById('share-btn').addEventListener('click', async (e) => {
-            e.preventDefault();
-            const imgSrc = document.getElementById('modal-image').src;
-
-            // Web Share API (iPhone/Android)
-            if (navigator.share) {
-                try {
-                    const response = await fetch(imgSrc);
-                    const blob = await response.blob();
-                    const file = new File([blob], 'image.jpg', { type: blob.type });
-
-                    await navigator.share({
-                        files: [file],
-                        title: 'Image',
-                    });
-                } catch (err) {
-                    if (err.name !== 'AbortError') console.error(err);
-                }
-            } else {
-                // Fallback: Download
-                const a = document.createElement('a');
-                a.href = imgSrc;
-                a.download = 'image.jpg';
-                a.click();
-            }
-        });
-
-        $("#ct_image").on('hidden.bs.modal', () => {
-            const img = document.querySelector('#ct_image img');
-            if (img.dataset.objectUrl) {
-                URL.revokeObjectURL(img.dataset.objectUrl);
+        $("#ct_image").one('hidden.bs.modal', () => {
+            if (img.dataset.objectUrl === url) {
+                URL.revokeObjectURL(url);
                 delete img.dataset.objectUrl;
                 img.src = '';
+                this._shareFile = null;
+                this._shareUrl = null;
             }
         });
+
+        $("#ct_image").modal('show');
     }
 
+    // Shares the image of the image modal (CHAT.SHARE_IMAGE); downloads it where the browser
+    // cannot share files (desktop).
+    _shareImage() {
+        const file = this._shareFile;
+        if (!file) return;
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            navigator.share({ files: [file] }).catch(err => {
+                if (err.name !== 'AbortError') console.error('Share failed:', err);
+            });
+            return;
+        }
+
+        const a = document.createElement('a');
+        a.href = this._shareUrl;
+        a.download = file.name;
+        a.click();
+    }
+}
+
+// File name with the extension of the image type, e.g. "chatbit-image.png"
+function imageFileName(mimeType) {
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp',
+                  'image/heic': 'heic', 'image/heif': 'heif' }[mimeType] || 'jpg';
+    return `chatbit-image.${ext}`;
 }

@@ -3,6 +3,7 @@ package port
 import (
 	"bytes"
 	"chatbit/internal/adapter/vapid"
+	"chatbit/internal/domain"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -34,6 +35,7 @@ type templateData struct {
 	Version        string
 	Commit         string
 	BuildDate      string
+	MaxFileSize    int64 // bytes (encrypted), so the app can refuse too large files before the upload
 }
 
 func NewFileHandler(vapidPubKey string, info BuildInfo) (*fileHandler, error) {
@@ -42,6 +44,7 @@ func NewFileHandler(vapidPubKey string, info BuildInfo) (*fileHandler, error) {
 		Version:        info.Version,
 		Commit:         info.Commit,
 		BuildDate:      info.BuildDate,
+		MaxFileSize:    domain.MaxFileSize,
 	}
 
 	indexHTML, err := renderTemplate(filepath.Join(StaticPath, "index.html"), data)

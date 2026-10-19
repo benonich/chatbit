@@ -14,27 +14,75 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func (c *WsClient) handleTransferStart(hdr *domain.File) {
+// handleTransferStart returns false if the upload is rejected
+func (c *WsClient) handleTransferStart(hdr *domain.File) bool {
 	slog.Debug("transfer_start", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
+
+	err := hdr.ValidateUpload()
+	if err != nil {
+		slog.Warn("transfer rejected", slog.Int64("size", hdr.TotalSize),
+			slog.Int64("chunkSize", hdr.ChunkSize), slog.Int64("chunks", hdr.ChunkTotal))
+		c.sendNACK(hdr.ID, 0, "invalid file size")
+		return false
+	}
+
+	c.fileTransferMu.Lock()
+	running := len(c.fileTransfer)
+	c.fileTransferMu.Unlock()
+	if running >= c.limits.cfg.MaxUploadsPerConn {
+		c.sendNACK(hdr.ID, 0, "busy")
+		return false
+	}
+
+	if !c.limits.AllowUpload(c.ip, hdr.TotalSize) {
+		slog.Warn("upload quota of IP reached")
+		c.sendNACK(hdr.ID, 0, "quota")
+		return false
+	}
+
+	// Keep MIN_FREE_DISK_MB free — the server must not fill its disk
+	if hdr.Store {
+		free, err := diskFree(domain.FileDir)
+		minFree := uint64(c.limits.cfg.MinFreeDiskMB) * 1024 * 1024
+		if err == nil && free < minFree+uint64(hdr.TotalSize) {
+			slog.Error("not enough free disk space for upload", slog.Uint64("free", free))
+			c.sendNACK(hdr.ID, 0, "disk full")
+			return false
+		}
+	}
+
+	room, err := c.app.DB.Room.Get(hdr.RoomID[:])
+	if err != nil {
+		slog.Error("transfer for unknown room", slog.String("error", err.Error()))
+		return false
+	}
 
 	fileHdr := &domain.Transfer{
 		File:     *hdr,
 		Received: 0,
+		Got:      make([]bool, hdr.ChunkTotal),
 	}
 
-	var err error
-
 	if hdr.Store {
+		// An existing file is never replaced (the header is only stored for complete uploads)
+		_, err = c.app.DB.File.Get(hdr.ID[:])
+		if err == nil {
+			slog.Warn("file id exists already, rejected")
+			c.sendNACK(hdr.ID, 0, "file exists")
+			return false
+		}
+
 		err = os.MkdirAll(hdr.GetFileDir(), 0o755)
 		if err != nil {
 			slog.Error("cannot create dir", slog.String("error", err.Error()))
-			return
+			return false
 		}
 
-		fileHdr.OsFile, err = os.Create(hdr.GetFilePath())
+		// Uploaded to <id>.part — a failed upload never leaves a broken file under the real name
+		fileHdr.OsFile, err = os.Create(hdr.GetPartPath())
 		if err != nil {
 			slog.Error("cannot create file", slog.String("error", err.Error()))
-			return
+			return false
 		}
 
 		err = fileHdr.OsFile.Truncate(hdr.TotalSize)
@@ -42,19 +90,13 @@ func (c *WsClient) handleTransferStart(hdr *domain.File) {
 			slog.Error("cannot truncate file", slog.String("error", err.Error()))
 			fileHdr.OsFile.Close()
 			os.Remove(fileHdr.OsFile.Name())
-			return
+			return false
 		}
 	}
 
-	if hdr.TTL > FileTTL || hdr.TTL == 0 {
-		hdr.TTL = FileTTL
-	}
-
-	err = c.app.DB.File.AddWithTTL(hdr, hdr.TTL)
-	if err != nil {
-		slog.Error("not possible to add file header to database", slog.String("error", err.Error()))
-		return
-	}
+	// Files live exactly as long as their message: room TTL or the shorter TTL of the message
+	hdr.TTL = room.MessageTTL(hdr.TTL)
+	fileHdr.TTL = hdr.TTL
 
 	c.fileTransferMu.Lock()
 	c.fileTransfer[hdr.ID] = fileHdr
@@ -62,21 +104,25 @@ func (c *WsClient) handleTransferStart(hdr *domain.File) {
 
 	c.sendACK(hdr.ID, 0)
 
-	slog.Info("transfer started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
+	slog.Debug("transfer started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
 
+	return true
 }
 
-func (c *WsClient) handleTransferDone(done *domain.File) {
+// handleTransferDone returns true if the upload is complete (and stored if the room stores files)
+func (c *WsClient) handleTransferDone(done *domain.File) bool {
 	c.fileTransferMu.Lock()
 	t, ok := c.fileTransfer[done.ID]
 	delete(c.fileTransfer, done.ID)
 	c.fileTransferMu.Unlock()
 
 	if !ok {
-		return
+		return false
 	}
 
-	t.OsFile.Close()
+	if t.OsFile != nil {
+		t.OsFile.Close()
+	}
 
 	if t.Received != t.ChunkTotal {
 		slog.Warn("transfer incomplete",
@@ -84,19 +130,26 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 			slog.Int64("expected", t.ChunkTotal),
 		)
 
-		err := os.Remove(t.GetFilePath())
-		if err != nil {
-			slog.Error("not possible to remove file", slog.String("error", err.Error()))
+		if t.Store {
+			err := os.Remove(t.GetPartPath())
+			if err != nil {
+				slog.Error("not possible to remove file", slog.String("error", err.Error()))
+			}
 		}
 
-		return
+		return false
 	}
 
-	err := c.app.PS.Message.Publish(t.Message)
-	if err != nil {
-		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
+	if t.Store {
+		ok = c.storeCompleteFile(t)
+		if !ok {
+			return false
+		}
 	}
 
+	// The image message itself was already stored via the normal "message" path. The message
+	// embedded in the file header must not be stored: it has the same key but no timestamp,
+	// type or alias, so it would overwrite the real message and offline peers would never get it.
 	msgB, err := json.Marshal(t.Message)
 	if err != nil {
 		slog.Error("not possible to unmarshal ws message ", slog.String("error", err.Error()))
@@ -115,8 +168,32 @@ func (c *WsClient) handleTransferDone(done *domain.File) {
 	err = c.psWsMsgAdapter.PublishExclude(t.RoomID, c.UID, WsOutbound{MsgType: websocket.TextMessage, Data: wsMsgB})
 	if err != nil {
 		slog.Error("not possible to update file in database", slog.String("error", err.Error()))
-		return
+		return false
 	}
+
+	return true
+}
+
+func (c *WsClient) storeCompleteFile(t *domain.Transfer) bool {
+	err := c.app.DB.File.InsertWithTTL(&t.File, t.TTL)
+	if errors.Is(err, domain.ErrObjExists) {
+		slog.Warn("file id exists already, upload dropped")
+		_ = os.Remove(t.GetPartPath())
+		return false
+	}
+	if err != nil {
+		slog.Error("not possible to add file header to database", slog.String("error", err.Error()))
+		_ = os.Remove(t.GetPartPath())
+		return false
+	}
+
+	err = os.Rename(t.GetPartPath(), t.GetFilePath())
+	if err != nil {
+		slog.Error("not possible to move uploaded file", slog.String("error", err.Error()))
+		return false
+	}
+
+	return true
 }
 
 func (c *WsClient) handleChunk(data []byte) {
@@ -131,7 +208,23 @@ func (c *WsClient) handleChunk(data []byte) {
 	c.fileTransferMu.Unlock()
 
 	if !ok {
-		slog.Warn("chunk for unknown transfer", slog.String("id", uid.String()))
+		slog.Warn("chunk for unknown transfer")
+		return
+	}
+
+	// The offset is calculated from the index — a chunk outside the file is never written
+	if !t.ChunkFits(chunkId, len(payload)) {
+		slog.Warn("chunk outside of file", slog.Int64("chunk", chunkId))
+		c.sendNACK(uid, chunkId, "invalid chunk")
+		return
+	}
+
+	// A chunk sent twice is neither counted nor forwarded again
+	c.fileTransferMu.Lock()
+	dup := t.Got[chunkId]
+	t.Got[chunkId] = true
+	c.fileTransferMu.Unlock()
+	if dup {
 		return
 	}
 
@@ -148,7 +241,7 @@ func (c *WsClient) handleChunk(data []byte) {
 		if err != nil {
 			slog.Error("chunk write error", slog.String("error", err.Error()))
 
-			c.sendNACK(uid, chunkId)
+			c.sendNACK(uid, chunkId, "write error")
 
 			return
 		}
@@ -159,7 +252,7 @@ func (c *WsClient) handleChunk(data []byte) {
 	c.fileTransferMu.Unlock()
 
 	if t.Received == t.ChunkTotal {
-		slog.Info("transfer done", slog.String("file", uid.String()))
+		slog.Debug("transfer done", slog.String("file", uid.String()))
 		return
 	}
 
@@ -173,13 +266,19 @@ func (c *WsClient) sendFileTransferStart(file *domain.File) error {
 		return err
 	}
 
+	// Headers stored before the upload validation existed
+	if hdr.ChunkSize <= 0 || hdr.ChunkSize > domain.FileChunkSize {
+		return fmt.Errorf("invalid chunk size %d of file %s", hdr.ChunkSize, hdr.ID)
+	}
+
 	f, err := os.Open(hdr.GetFilePath())
 	if err != nil {
 		slog.Error("cannot create temp file", slog.String("error", err.Error()))
 		return err
 	}
+	defer f.Close()
 
-	slog.Info("transfer request started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
+	slog.Debug("transfer request started", slog.String("file", hdr.ID.String()), slog.Int64("size", hdr.TotalSize))
 
 	err = c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferStart, hdr))
 	if err != nil {
@@ -255,8 +354,8 @@ func (c *WsClient) sendACK(id uuid.UUID, chunk int64) {
 	}
 }
 
-func (c *WsClient) sendNACK(id uuid.UUID, chunk int64) {
-	err := c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferNACK, domain.TransferNACK{ID: id, Chunk: chunk}))
+func (c *WsClient) sendNACK(id uuid.UUID, chunk int64, reason string) {
+	err := c.psWsMsgAdapter.PublishTo(c.UID, c.UID, NewWsOutboundMessage(domain.WsTypeFileTransferNACK, domain.TransferNACK{ID: id, Chunk: chunk, Reason: reason}))
 	if err != nil {
 		slog.Error("not possible to publish ACK", slog.String("error", err.Error()))
 	}

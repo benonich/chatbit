@@ -11,7 +11,7 @@
 
         <form id="send_message_form" >
             <div class="dropdown">
-                <button class="btn btn-icon btn-primary rounded" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <button class="btn btn-icon btn-primary room-accent rounded" type="button" data-bs-toggle="dropdown" aria-expanded="false">
                     <i class="bi bi-plus-lg"></i>
                 </button>
                 <div class="dropdown-menu" style="">
@@ -19,8 +19,12 @@
                     <a class="dropdown-item" href="#" onclick="document.getElementById('ct_img_input').click(); return false;">
                         <i class="bi bi-image-fill"></i>Image
                     </a>
+                    <a class="dropdown-item" href="#" onclick="document.getElementById('ct_doc_input').click(); return false;">
+                        <i class="bi bi-file-earmark-fill"></i>Document
+                    </a>
                 </div>
                 <input type="file" id="ct_img_input" accept="image/*" style="display:none;" data-change="chat:send_file">
+                <input type="file" id="ct_doc_input" style="display:none;" data-change="chat:send_document">
             </div>
             <div class="form-group boxed">
                 <div class="input-wrapper">
@@ -31,7 +35,7 @@
                     </i>
                 </div>
             </div>
-            <button type="button" class="btn btn-icon btn-primary rounded" data-action="chat:send_message">
+            <button type="button" class="btn btn-icon btn-primary room-accent rounded" data-action="chat:send_message">
                 <ion-icon name="send"></ion-icon>
             </button>
         </form>
@@ -144,21 +148,25 @@
                                         </div>
                                     </li>
 
-                                    <!-- display: none; removed from the inline style -->
+                                    <!-- Room maximum: fixed when the room was created -->
+                                    <li>
+                                        <div style="text-align: left">Room maximum</div>
+                                        <div><ion-icon name="timer-outline"></ion-icon> <span data-field="room_max_ttl"></span></div>
+                                    </li>
+
+                                    <!-- Delete time of own messages, at most the room maximum -->
                                     <li class="row" id="ct_edit_room_ttl_row">
-                                        <div style="text-align: left" class="col-6"> - Delete After</div>
-                                        <div class="col-3 input-wrapper">
-                                            <input style="text-align: center" class="form-control" type="number" id="ct_edit_room_ttl" value="0" name="room_delete_after">
-                                        </div>
-                                        <div class="col-3 input-wrapper">
-                                            <select class="form-control" id="ct_edit_room_ttl_unit" name="room_delete_after_unit">
-                                                <option value="60">min</option>
-                                                <option value="3600">hour</option>
-                                                <option value="86400">day</option>
-                                            </select>
+                                        <div style="text-align: left" class="col-6">My messages</div>
+                                        <div class="col-6 input-wrapper">
+                                            <!-- options are filled by _fillEditRoomModal: room maximum + the fixed steps below it -->
+                                            <select class="form-control" id="ct_edit_room_ttl" name="message_ttl"></select>
                                         </div>
                                     </li>
                                 </ul>
+                                <div class="text-muted small mt-1">
+                                    The room maximum is set when the room is created and can not be changed.
+                                    Your messages can be deleted earlier. Only fixed steps are offered — an individual time would make your messages recognizable to the server.
+                                </div>
 
                                 <div class="mt-2">
                                     <button type="button" class="btn btn-primary btn-block btn-lg" data-action="chat:update_active_room">Update Room</button>
@@ -180,7 +188,7 @@
                 <div class="modal-footer">
                     <div class="btn-inline">
                         <a href="#" class="btn btn-text-secondary" data-bs-dismiss="modal">CLOSE</a>
-                        <a href="#" class="btn btn-text-primary" data-bs-dismiss="modal" id="share-btn">SHARE</a>
+                        <button type="button" class="btn btn-text-primary" data-action="chat:share_image">SHARE</button>
                     </div>
                 </div>
             </div>

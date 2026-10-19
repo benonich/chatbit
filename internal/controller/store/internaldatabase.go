@@ -76,6 +76,25 @@ func (aI *AdapterInternal[T]) Update(ID []byte, fn func(obj T) error) error {
 	return aI.add(obj)
 }
 
+// UpdateWithTTL is Update, but the object is stored again with the TTL returned by ttl
+// (called after fn, so it can depend on the changed object).
+func (aI *AdapterInternal[T]) UpdateWithTTL(ID []byte, fn func(obj T) error, ttl func(obj T) int64) error {
+	aI.mutex.Lock()
+	defer aI.mutex.Unlock()
+
+	obj, err := aI.get(ID)
+	if err != nil {
+		return err
+	}
+
+	err = fn(obj)
+	if err != nil {
+		return err
+	}
+
+	return aI.AddWithTTL(obj, ttl(obj))
+}
+
 func (aI *AdapterInternal[T]) get(ID []byte) (T, error) {
 	obj, err := aI.db.GetObjectByID(append(aI.prefix, ID[:]...))
 	if err != nil {
@@ -98,6 +117,16 @@ func (aI *AdapterInternal[T]) AddWithTTL(obj T, ttl int64) error {
 	err := aI.db.AddObjectWithTTL(append(aI.prefix, obj.GetID()...), obj, time.Duration(ttl)*time.Second)
 	if err != nil {
 		return fmt.Errorf("not possible store object to database: %w", err)
+	}
+
+	return nil
+}
+
+// InsertWithTTL stores obj only if it does not exist yet, otherwise domain.ErrObjExists
+func (aI *AdapterInternal[T]) InsertWithTTL(obj T, ttl int64) error {
+	err := aI.db.InsertObjectWithTTL(append(aI.prefix, obj.GetID()...), obj, time.Duration(ttl)*time.Second)
+	if err != nil {
+		return fmt.Errorf("not possible to insert object to database: %w", err)
 	}
 
 	return nil
